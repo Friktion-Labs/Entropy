@@ -220,7 +220,8 @@ pub struct MangoGroup {
     pub ref_surcharge_centibps: u32, // 100
     pub ref_share_centibps: u32,     // 80 (must be less than surcharge)
     pub ref_mngo_required: u64,
-    pub padding: [u8; 8], // padding used for future expansions
+    pub dont_square: bool,
+    pub padding: [u8; 7], // padding used for future expansions
 }
 
 impl MangoGroup {
