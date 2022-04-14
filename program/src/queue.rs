@@ -138,7 +138,7 @@ impl<'a, 'b, H: QueueHeader> Iterator for QueueIterator<'a, 'b, H> {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct EventQueueHeader {
     pub meta_data: MetaData,
     head: usize,
@@ -214,7 +214,7 @@ pub enum EventType {
 
 const EVENT_SIZE: usize = 200;
 #[derive(Copy, Clone, Debug, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct AnyEvent {
     pub event_type: u8,
     pub padding: [u8; EVENT_SIZE - 1],
@@ -222,7 +222,7 @@ pub struct AnyEvent {
 unsafe impl TriviallyTransmutable for AnyEvent {}
 
 #[derive(Copy, Clone, Debug, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct FillEvent {
     pub event_type: u8,
     pub taker_side: Side, // side from the taker's POV
@@ -335,7 +335,7 @@ impl FillEvent {
 }
 
 #[derive(Copy, Clone, Debug, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct OutEvent {
     pub event_type: u8,
     pub side: Side,
@@ -372,7 +372,7 @@ impl OutEvent {
 }
 
 #[derive(Copy, Clone, Debug, Pod)]
-#[repr(C)]
+#[repr(packed)]
 /// Liquidation for the PerpMarket this EventQueue is for
 pub struct LiquidateEvent {
     pub event_type: u8,

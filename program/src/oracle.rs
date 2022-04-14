@@ -23,7 +23,7 @@ pub enum OracleType {
 pub const STUB_MAGIC: u32 = 0x6F676E4D;
 
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct StubOracle {
     pub magic: u32,    // Magic byte
     pub price: I80F48, // unit is interpreted as how many quote native tokens for 1 base native token
