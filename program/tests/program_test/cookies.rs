@@ -1,5 +1,7 @@
+use anchor_lang::prelude::AccountMeta;
 use fixed::types::I80F48;
 use fixed::FixedI128;
+use solana_program::instruction::Instruction;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 
@@ -72,10 +74,20 @@ impl MangoGroupCookie {
         let msrm_vault_pk = test.create_token_account(&signer_pk, &msrm_token::ID).await;
         let fees_vault_pk = test.create_token_account(&signer_pk, &quote_mint_pk).await;
 
-        let quote_optimal_util = I80F48::from_num(0.7);
-        let quote_optimal_rate = I80F48::from_num(0.06);
-        let quote_max_rate = I80F48::from_num(1.5);
+        let quote_optimal_util = I80F48::from_num(0.7_f64);
+        let quote_optimal_rate = I80F48::from_num(0.06_f64);
+        let quote_max_rate = I80F48::from_num(1.5_f64);
 
+        let accounts = vec![
+            AccountMeta::new(mango_group_pk, false),
+            AccountMeta::new_readonly(admin_pk, true),
+        ];
+    
+        let instr = mango::instruction::MangoInstruction::DontSquare { dont_square: true };
+    
+        let data = instr.pack();
+        let dont_square_ix = Instruction { program_id: mango_program_id, accounts, data };
+    
         let instructions = [mango::instruction::init_mango_group(
             &mango_program_id,
             &mango_group_pk,
@@ -96,7 +108,7 @@ impl MangoGroupCookie {
             quote_optimal_rate,
             quote_max_rate,
         )
-        .unwrap()];
+        .unwrap(), dont_square_ix];
 
         test.process_transaction(&instructions, None).await.unwrap();
 
