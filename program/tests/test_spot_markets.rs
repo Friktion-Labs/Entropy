@@ -28,6 +28,7 @@ async fn test_init_spot_markets() {
     // === Arrange ===
     let config = MangoProgramTestConfig::default();
     let mut test = MangoProgramTest::start_new(&config).await;
+
     let mut mango_group_cookie = MangoGroupCookie::default(&mut test).await;
 
     // === Act ===

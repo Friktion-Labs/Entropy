@@ -108,6 +108,7 @@ impl Processor {
         mango_group.signer_key = *signer_ai.key;
         mango_group.valid_interval = valid_interval;
         mango_group.dex_program_id = *dex_prog_ai.key;
+        mango_group.dont_square = false;
 
         // TODO OPT make PDA
         let insurance_vault = Account::unpack(&insurance_vault_ai.try_borrow_data()?)?;
@@ -1158,9 +1159,9 @@ impl Processor {
             let oracle_index = mango_group.find_oracle_index(oracle_ai.key).ok_or(throw!())?;
             // let oracle_info = oracle_map.get(&oracle_index);
 
-            let sub_oracle_index = if oracle_index == 0 { 1 } else { oracle_index };
-            let sub_oracle_ai = if oracle_index == 0 { substitute_oracle } else { oracle_ai };
-            let should_square = if oracle_index == 0 { true } else { false };
+            let sub_oracle_index = if oracle_index == 0 && !mango_group.dont_square { 1 } else { oracle_index };
+            let sub_oracle_ai = if oracle_index == 0 && !mango_group.dont_square { substitute_oracle } else { oracle_ai };
+            let should_square = if oracle_index == 0 && !mango_group.dont_square { true } else { false };
 
             if let Ok(mut price) = read_oracle(
                 &mango_group,
@@ -1172,7 +1173,7 @@ impl Processor {
                 if should_square {
                     price = pow_i80f48(price, 2).checked_div(I80F48!(1000000)).unwrap();
                 }
-                msg!("Oracle px: {:?}", price);
+                // msg!("Oracle px: {:?}", price);
                 mango_cache.price_cache[oracle_index] = PriceCache { price, last_update };
 
                 oracle_indexes.push(oracle_index as u64);
@@ -1761,6 +1762,8 @@ impl Processor {
                 ),
             }
         };
+
+        msg!("post allowed = {:?}", post_allowed);
 
         // Send order to serum dex
         let signers_seeds = gen_signer_seeds(&mango_group.signer_nonce, mango_group_ai.key);
