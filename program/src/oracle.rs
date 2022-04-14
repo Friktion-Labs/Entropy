@@ -3,7 +3,7 @@ use fixed::types::I80F48;
 use mango_common::Loadable;
 use mango_macro::{Loadable, Pod};
 use solana_program::{account_info::AccountInfo, pubkey::Pubkey, rent::Rent};
-use std::{cell::RefMut, mem::size_of};
+use std::{cell::RefMut, mem::size_of, str::FromStr};
 
 use crate::error::{check_assert, MangoErrorCode, MangoResult, SourceFileId};
 
@@ -68,11 +68,13 @@ pub fn determine_oracle_type(account: &AccountInfo) -> OracleType {
         OracleType::Pyth
     } else if borrowed.len() == 1000 {
         OracleType::Switchboard
-    } else if account.owner.to_string().as_str() == "2TfB33aLaneQb5TNVwyDz3jSZXS6jdW2ARw1Dgf84XCG" {
-        return OracleType::SwitchboardV2;
     } else if magic == STUB_MAGIC {
         OracleType::Stub
-    } else {
+    } 
+    //  else if account.owner == &Pubkey::from_str("2TfB33aLaneQb5TNVwyDz3jSZXS6jdW2ARw1Dgf84XCG").unwrap() {
+    //     return OracleType::SwitchboardV2;
+    // }
+     else {
         OracleType::Unknown
     }
 }

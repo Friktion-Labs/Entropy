@@ -532,16 +532,15 @@ impl Processor {
         let oracle_type = determine_oracle_type(oracle_ai);
         match oracle_type {
             OracleType::Pyth => {
-                msg!("OracleType:Pyth"); // Do nothing really cause all that's needed is storing the pkey
+                // msg!("OracleType:Pyth"); // Do nothing really cause all that's needed is storing the pkey
             }
             OracleType::Switchboard => {
-                msg!("OracleType::Switchboard");
+                // msg!("OracleType::Switchboard");
             }
             OracleType::SwitchboardV2 => {
-                msg!("OracleType::SwitchboardV2");
+                // msg!("OracleType::SwitchboardV2");
             }
             OracleType::Stub | OracleType::Unknown => {
-                msg!("OracleType: got unknown or stub");
                 let rent = Rent::get()?;
                 let mut oracle = StubOracle::load_and_init(oracle_ai, program_id, &rent)?;
                 oracle.magic = STUB_MAGIC;
@@ -5694,6 +5693,28 @@ impl Processor {
         Ok(())
     }
 
+    #[inline(never)]
+    /// Change the maximum number of MangoAccounts.v1 allowed
+    fn change_dont_square(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        dont_square: bool,
+    ) -> MangoResult {
+        const NUM_FIXED: usize = 2;
+        let accounts = array_ref![accounts, 0, NUM_FIXED];
+        let [
+            mango_group_ai, // write
+            admin_ai        // read, signer
+        ] = accounts;
+
+        let mut mango_group = MangoGroup::load_mut_checked(mango_group_ai, program_id)?;
+        check!(admin_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(admin_ai.key, &mango_group.admin, MangoErrorCode::InvalidAdminKey)?;
+
+        mango_group.dont_square = dont_square;
+        Ok(())
+    }
+
     /// Create a DustAccount PDA and initialize it
     #[inline(never)]
     fn create_dust_account(program_id: &Pubkey, accounts: &[AccountInfo]) -> MangoResult {
@@ -6769,6 +6790,10 @@ impl Processor {
             MangoInstruction::CancelAllSpotOrders { limit } => {
                 msg!("Mango: CancelAllSpotOrders");
                 Self::cancel_all_spot_orders(program_id, accounts, limit)
+            }
+            MangoInstruction::DontSquare { dont_square } => {
+                msg!("Mango: DontSquare");
+                Self::change_dont_square(program_id, accounts, dont_square)
             }
         }
     }

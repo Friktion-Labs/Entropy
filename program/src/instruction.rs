@@ -1057,6 +1057,10 @@ pub enum MangoInstruction {
     CancelAllSpotOrders {
         limit: u8,
     },
+
+    DontSquare {
+        dont_square: bool
+    }
 }
 
 impl MangoInstruction {
@@ -1549,6 +1553,12 @@ impl MangoInstruction {
                 let data_arr = array_ref![data, 0, 1];
                 let limit = data_arr[0];
                 MangoInstruction::CancelAllSpotOrders { limit }
+            }
+            66 => {
+                let data_arr = array_ref![data, 0, 1];
+                MangoInstruction::DontSquare {
+                    dont_square: data_arr[0] != 0
+                }
             }
             _ => {
                 return None;
