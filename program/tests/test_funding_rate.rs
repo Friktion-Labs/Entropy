@@ -8,17 +8,8 @@ use solana_program_test::*;
 #[tokio::test]
 async fn test_funding_rate() {
     // === Arrange ===
-    let config = MangoProgramTestConfig { compute_limit: 200_000, num_users: 2, num_mints: 2 };
+    let config = MangoProgramTestConfig::default_two_mints();
     let mut test = MangoProgramTest::start_new(&config).await;
-    // Supress some of the logs
-    solana_logger::setup_with_default(
-        "solana_rbpf::vm=info,\
-             solana_runtime::message_processor=debug,\
-             solana_runtime::system_instruction_processor=info,\
-             solana_program_test=info",
-    );
-    // Disable all logs except error
-    // solana_logger::setup_with("error");
 
     let mut mango_group_cookie = MangoGroupCookie::default(&mut test).await;
     mango_group_cookie.full_setup(&mut test, config.num_users, config.num_mints - 1).await;
@@ -33,8 +24,8 @@ async fn test_funding_rate() {
     let new_ask_price: f64 = 10_200.0;
     let clock = test.get_clock().await;
     let start_time = clock.unix_timestamp;
-    let end_time = start_time + 3600 * 48; // 48 Hours
-                                           // TODO: Figure out assertion
+    let end_time = start_time + 3600 * 1; // 1 Hour
+                                          // TODO: Figure out assertion
 
     // Set oracles
     mango_group_cookie.set_oracle(&mut test, mint_index, base_price).await;

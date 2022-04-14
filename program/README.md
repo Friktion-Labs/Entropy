@@ -1,17 +1,13 @@
 ## Tests
 
-```tt
+```
 cargo test-bpf -- --show-output
 ```
-## Compile
+
+## Deploy to devnet
 
 ```
-cargo build-bpf --features devnet --bpf-out-dir target/devnet
-```
-
-## Deploy to Devnertaazzz
-```
-solana program deploy target/devnet/mango.so -k ~/.config/solana/devnet.json --program-id 4AFs3w5V5J9bDLEcNMEobdG3W4NYmXFgTe4KS41HBKqa
+cargo build-bpf && solana program deploy -k ~/.config/solana/devnet.json --program-id 4AFs3w5V5J9bDLEcNMEobdG3W4NYmXFgTe4KS41HBKqa ./target/deploy/mango.so
 ```
 
 ## Log Events

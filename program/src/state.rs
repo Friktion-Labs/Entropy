@@ -2,6 +2,7 @@ use std::cell::{Ref, RefMut};
 use std::cmp::{max, min};
 use std::convert::{identity, TryFrom};
 use std::mem::size_of;
+use std::ops::Deref;
 
 use bytemuck::{cast_ref, from_bytes, from_bytes_mut, try_from_bytes_mut};
 use enumflags2::BitFlags;
@@ -16,16 +17,18 @@ use solana_program::program_pack::Pack;
 use solana_program::pubkey::Pubkey;
 use solana_program::sysvar::{clock::Clock, rent::Rent, Sysvar};
 use spl_token::state::Account;
+use static_assertions::const_assert_eq;
 
 use mango_common::Loadable;
 use mango_macro::{Loadable, Pod, TriviallyTransmutable};
-use static_assertions::const_assert_eq;
 
-use crate::error::{check_assert, EntropyError, EntropyErrorCode, MangoResult, SourceFileId};
+use crate::error::{check_assert, MangoError, MangoErrorCode, MangoResult, SourceFileId};
 use crate::ids::mngo_token;
 use crate::matching::{Book, LeafNode, OrderType, Side};
 use crate::queue::{EventQueue, EventType, FillEvent};
-use crate::utils::{invert_side, pow_i80f48, remove_slop_mut, split_open_orders};
+use crate::utils::{
+    compute_interest_rate, invert_side, pow_i80f48, remove_slop_mut, split_open_orders,
+};
 
 pub const MAX_TOKENS: usize = 16; // Just changed
 pub const MAX_PAIRS: usize = MAX_TOKENS - 1;
@@ -48,6 +51,7 @@ pub const FREE_ORDER_SLOT: u8 = u8::MAX;
 pub const MAX_NUM_IN_MARGIN_BASKET: u8 = 9;
 pub const INDEX_START: I80F48 = I80F48!(1_000_000);
 pub const PYTH_CONF_FILTER: I80F48 = I80F48!(0.10); // filter out pyth prices with conf > 10% of price
+pub const CENTIBPS_PER_UNIT: I80F48 = I80F48!(1_000_000);
 
 declare_check_assert_macros!(SourceFileId::State);
 
@@ -79,14 +83,22 @@ pub enum DataType {
     MangoCache,
     EventQueue,
     AdvancedOrders,
+    ReferrerMemory,
+    ReferrerIdRecord,
 }
 
-const NUM_HEALTHS: usize = 2;
+const NUM_HEALTHS: usize = 3;
 #[repr(usize)]
 #[derive(Copy, Clone, IntoPrimitive, TryFromPrimitive)]
 pub enum HealthType {
+    /// Maintenance health. If this health falls below 0 you get liquidated
     Maint,
+
+    /// Initial health. If this falls below 0 you cannot open more positions
     Init,
+
+    /// This is just the account equity i.e. unweighted sum of value of assets minus liabilities
+    Equity,
 }
 
 #[derive(
@@ -204,7 +216,11 @@ pub struct MangoGroup {
 
     pub max_mango_accounts: u32, // limits maximum number of MangoAccounts.v1 (closeable) accounts
     pub num_mango_accounts: u32, // number of MangoAccounts.v1
-    pub padding: [u8; 24],       // padding used for future expansions
+
+    pub ref_surcharge_centibps: u32, // 100
+    pub ref_share_centibps: u32,     // 80 (must be less than surcharge)
+    pub ref_mngo_required: u64,
+    pub padding: [u8; 8], // padding used for future expansions
 }
 
 impl MangoGroup {
@@ -212,14 +228,14 @@ impl MangoGroup {
         account: &'a AccountInfo,
         program_id: &Pubkey,
     ) -> MangoResult<RefMut<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
         let mango_group: RefMut<'a, Self> = Self::load_mut(account)?;
-        check!(mango_group.meta_data.is_initialized, EntropyErrorCode::InvalidAccount)?;
+        check!(mango_group.meta_data.is_initialized, MangoErrorCode::InvalidAccount)?;
         check_eq!(
             mango_group.meta_data.data_type,
             DataType::MangoGroup as u8,
-            EntropyErrorCode::InvalidAccount
+            MangoErrorCode::InvalidAccount
         )?;
 
         Ok(mango_group)
@@ -228,14 +244,14 @@ impl MangoGroup {
         account: &'a AccountInfo,
         program_id: &Pubkey,
     ) -> MangoResult<Ref<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
         let mango_group: Ref<'a, Self> = Self::load(account)?;
-        check!(mango_group.meta_data.is_initialized, EntropyErrorCode::InvalidAccount)?;
+        check!(mango_group.meta_data.is_initialized, MangoErrorCode::InvalidAccount)?;
         check_eq!(
             mango_group.meta_data.data_type,
             DataType::MangoGroup as u8,
-            EntropyErrorCode::InvalidAccount
+            MangoErrorCode::InvalidAccount
         )?;
 
         Ok(mango_group)
@@ -247,6 +263,9 @@ impl MangoGroup {
     pub fn find_root_bank_index(&self, root_bank_pk: &Pubkey) -> Option<usize> {
         // TODO profile and optimize
         self.tokens.iter().position(|token_info| &token_info.root_bank == root_bank_pk)
+    }
+    pub fn find_token_index(&self, mint_pk: &Pubkey) -> Option<usize> {
+        self.tokens.iter().position(|token_info| &token_info.mint == mint_pk)
     }
     pub fn find_spot_market_index(&self, spot_market_pk: &Pubkey) -> Option<usize> {
         self.spot_markets
@@ -265,6 +284,7 @@ impl MangoGroup {
             match health_type {
                 HealthType::Maint => self.spot_markets[token_index].maint_asset_weight,
                 HealthType::Init => self.spot_markets[token_index].init_asset_weight,
+                HealthType::Equity => ONE_I80F48,
             }
         }
     }
@@ -301,12 +321,12 @@ impl RootBank {
         max_rate: I80F48,
     ) -> MangoResult<RefMut<'a, Self>> {
         let mut root_bank: RefMut<'a, Self> = Self::load_mut(account)?;
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         check!(
             rent.is_exempt(account.lamports(), size_of::<Self>()),
-            EntropyErrorCode::AccountNotRentExempt
+            MangoErrorCode::AccountNotRentExempt
         )?;
-        check!(!root_bank.meta_data.is_initialized, EntropyErrorCode::Default)?;
+        check!(!root_bank.meta_data.is_initialized, MangoErrorCode::Default)?;
 
         root_bank.meta_data = MetaData::new(DataType::RootBank, 0, true);
         root_bank.node_banks[0] = *node_bank_ai.key;
@@ -325,10 +345,10 @@ impl RootBank {
     ) -> MangoResult<()> {
         check!(
             optimal_util > ZERO_I80F48 && optimal_util < ONE_I80F48,
-            EntropyErrorCode::InvalidParam
+            MangoErrorCode::InvalidParam
         )?;
-        check!(optimal_rate >= ZERO_I80F48, EntropyErrorCode::InvalidParam)?;
-        check!(max_rate >= ZERO_I80F48, EntropyErrorCode::InvalidParam)?;
+        check!(optimal_rate >= ZERO_I80F48, MangoErrorCode::InvalidParam)?;
+        check!(max_rate >= ZERO_I80F48, MangoErrorCode::InvalidParam)?;
 
         self.optimal_util = optimal_util;
         self.optimal_rate = optimal_rate;
@@ -340,16 +360,16 @@ impl RootBank {
         account: &'a AccountInfo,
         program_id: &Pubkey,
     ) -> MangoResult<RefMut<'a, Self>> {
-        check_eq!(account.data_len(), size_of::<Self>(), EntropyErrorCode::InvalidAccount)?;
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.data_len(), size_of::<Self>(), MangoErrorCode::InvalidAccount)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
         let root_bank = Self::load_mut(account)?;
 
-        check!(root_bank.meta_data.is_initialized, EntropyErrorCode::InvalidAccount)?;
+        check!(root_bank.meta_data.is_initialized, MangoErrorCode::InvalidAccount)?;
         check_eq!(
             root_bank.meta_data.data_type,
             DataType::RootBank as u8,
-            EntropyErrorCode::Default
+            MangoErrorCode::Default
         )?;
 
         Ok(root_bank)
@@ -358,16 +378,16 @@ impl RootBank {
         account: &'a AccountInfo,
         program_id: &Pubkey,
     ) -> MangoResult<Ref<'a, Self>> {
-        check_eq!(account.data_len(), size_of::<Self>(), EntropyErrorCode::InvalidAccount)?;
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.data_len(), size_of::<Self>(), MangoErrorCode::InvalidAccount)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
         let root_bank = Self::load(account)?;
 
-        check!(root_bank.meta_data.is_initialized, EntropyErrorCode::InvalidAccount)?;
+        check!(root_bank.meta_data.is_initialized, MangoErrorCode::InvalidAccount)?;
         check_eq!(
             root_bank.meta_data.data_type,
             DataType::RootBank as u8,
-            EntropyErrorCode::Default
+            MangoErrorCode::Default
         )?;
 
         Ok(root_bank)
@@ -399,14 +419,7 @@ impl RootBank {
         let utilization = native_borrows.checked_div(native_deposits).unwrap_or(ZERO_I80F48);
 
         // Calculate interest rate
-        let interest_rate = if utilization > self.optimal_util {
-            let extra_util = utilization - self.optimal_util;
-            let slope = (self.max_rate - self.optimal_rate) / (ONE_I80F48 - self.optimal_util);
-            self.optimal_rate + slope * extra_util
-        } else {
-            let slope = self.optimal_rate / self.optimal_util;
-            slope * utilization
-        };
+        let interest_rate = compute_interest_rate(&self, utilization);
 
         let borrow_interest: I80F48 =
             interest_rate.checked_mul(I80F48::from_num(now_ts - self.last_updated)).unwrap();
@@ -448,7 +461,7 @@ impl RootBank {
         let mut static_deposits = ZERO_I80F48;
 
         for i in 0..self.num_node_banks {
-            check!(node_bank_ais[i].key == &self.node_banks[i], EntropyErrorCode::InvalidNodeBank)?;
+            check!(node_bank_ais[i].key == &self.node_banks[i], MangoErrorCode::InvalidNodeBank)?;
 
             let node_bank = NodeBank::load_checked(&node_bank_ais[i], program_id)?;
             static_deposits = static_deposits.checked_add(node_bank.deposits).unwrap();
@@ -501,12 +514,12 @@ impl NodeBank {
         rent: &Rent,
     ) -> MangoResult<RefMut<'a, Self>> {
         let mut node_bank = Self::load_mut(account)?;
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         check!(
             rent.is_exempt(account.lamports(), size_of::<Self>()),
-            EntropyErrorCode::AccountNotRentExempt
+            MangoErrorCode::AccountNotRentExempt
         )?;
-        check!(!node_bank.meta_data.is_initialized, EntropyErrorCode::Default)?;
+        check!(!node_bank.meta_data.is_initialized, MangoErrorCode::Default)?;
 
         node_bank.meta_data = MetaData::new(DataType::NodeBank, 0, true);
         node_bank.deposits = ZERO_I80F48;
@@ -519,18 +532,18 @@ impl NodeBank {
         account: &'a AccountInfo,
         program_id: &Pubkey,
     ) -> MangoResult<RefMut<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
         // TODO verify if size check necessary. We know load_mut fails if account size is too small for struct,
         //  does it also fail if it's too big?
-        check_eq!(account.data_len(), size_of::<Self>(), EntropyErrorCode::InvalidAccount)?;
+        check_eq!(account.data_len(), size_of::<Self>(), MangoErrorCode::InvalidAccount)?;
         let node_bank = Self::load_mut(account)?;
 
-        check!(node_bank.meta_data.is_initialized, EntropyErrorCode::InvalidAccount)?;
+        check!(node_bank.meta_data.is_initialized, MangoErrorCode::InvalidAccount)?;
         check_eq!(
             node_bank.meta_data.data_type,
             DataType::NodeBank as u8,
-            EntropyErrorCode::InvalidAccount
+            MangoErrorCode::InvalidAccount
         )?;
 
         Ok(node_bank)
@@ -540,15 +553,15 @@ impl NodeBank {
         account: &'a AccountInfo,
         program_id: &Pubkey,
     ) -> MangoResult<Ref<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
-        check_eq!(account.data_len(), size_of::<Self>(), EntropyErrorCode::InvalidAccount)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
+        check_eq!(account.data_len(), size_of::<Self>(), MangoErrorCode::InvalidAccount)?;
         let node_bank = Self::load(account)?;
 
-        check!(node_bank.meta_data.is_initialized, EntropyErrorCode::InvalidAccount)?;
+        check!(node_bank.meta_data.is_initialized, MangoErrorCode::InvalidAccount)?;
         check_eq!(
             node_bank.meta_data.data_type,
             DataType::NodeBank as u8,
-            EntropyErrorCode::InvalidAccount
+            MangoErrorCode::InvalidAccount
         )?;
 
         Ok(node_bank)
@@ -573,11 +586,11 @@ impl NodeBank {
     }
     pub fn get_total_native_borrow(&self, root_bank_cache: &RootBankCache) -> u64 {
         let native: I80F48 = self.borrows * root_bank_cache.borrow_index;
-        native.checked_ceil().unwrap().to_num() // rounds toward +inf
+        native.checked_ceil().unwrap().checked_to_num().unwrap() // rounds toward +inf
     }
     pub fn get_total_native_deposit(&self, root_bank_cache: &RootBankCache) -> u64 {
         let native: I80F48 = self.deposits * root_bank_cache.deposit_index;
-        native.checked_floor().unwrap().to_num() // rounds toward -inf
+        native.checked_floor().unwrap().checked_to_num().unwrap() // rounds toward -inf
     }
 }
 
@@ -590,9 +603,12 @@ pub struct PriceCache {
 
 impl PriceCache {
     pub fn check_valid(&self, mango_group: &MangoGroup, now_ts: u64) -> MangoResult<()> {
+        // Hack: explicitly double valid_interval as a quick fix to make Mango
+        // less likely to become unusable when solana reliability goes bad.
+        // There's currently no instruction to change the valid_interval.
         check!(
-            self.last_update >= now_ts - mango_group.valid_interval,
-            EntropyErrorCode::InvalidPriceCache
+            self.last_update >= now_ts - (2 * mango_group.valid_interval),
+            MangoErrorCode::InvalidPriceCache
         )
     }
 }
@@ -609,7 +625,7 @@ impl RootBankCache {
     pub fn check_valid(&self, mango_group: &MangoGroup, now_ts: u64) -> MangoResult<()> {
         check!(
             self.last_update >= now_ts - (mango_group.valid_interval * 2),
-            EntropyErrorCode::InvalidRootBankCache
+            MangoErrorCode::InvalidRootBankCache
         )
     }
 }
@@ -625,8 +641,8 @@ pub struct PerpMarketCache {
 impl PerpMarketCache {
     pub fn check_valid(&self, mango_group: &MangoGroup, now_ts: u64) -> MangoResult<()> {
         check!(
-            self.last_update >= now_ts - mango_group.valid_interval,
-            EntropyErrorCode::InvalidPerpMarketCache
+            self.last_update >= now_ts - (2 * mango_group.valid_interval),
+            MangoErrorCode::InvalidPerpMarketCache
         )
     }
 }
@@ -648,16 +664,16 @@ impl MangoCache {
         mango_group: &MangoGroup,
     ) -> MangoResult<RefMut<'a, Self>> {
         // mango account must be rent exempt to even be initialized
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         let mango_cache = Self::load_mut(account)?;
 
         check_eq!(
             mango_cache.meta_data.data_type,
             DataType::MangoCache as u8,
-            EntropyErrorCode::Default
+            MangoErrorCode::Default
         )?;
-        check!(mango_cache.meta_data.is_initialized, EntropyErrorCode::Default)?;
-        check_eq!(&mango_group.mango_cache, account.key, EntropyErrorCode::Default)?;
+        check!(mango_cache.meta_data.is_initialized, MangoErrorCode::Default)?;
+        check_eq!(&mango_group.mango_cache, account.key, MangoErrorCode::Default)?;
 
         Ok(mango_cache)
     }
@@ -667,18 +683,18 @@ impl MangoCache {
         program_id: &Pubkey,
         mango_group: &MangoGroup,
     ) -> MangoResult<Ref<'a, Self>> {
-        check_eq!(account.data_len(), size_of::<Self>(), EntropyErrorCode::Default)?;
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.data_len(), size_of::<Self>(), MangoErrorCode::Default)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
         let mango_cache = Self::load(account)?;
 
         check_eq!(
             mango_cache.meta_data.data_type,
             DataType::MangoCache as u8,
-            EntropyErrorCode::Default
+            MangoErrorCode::Default
         )?;
-        check!(mango_cache.meta_data.is_initialized, EntropyErrorCode::Default)?;
-        check_eq!(&mango_group.mango_cache, account.key, EntropyErrorCode::Default)?;
+        check!(mango_cache.meta_data.is_initialized, MangoErrorCode::Default)?;
+        check_eq!(&mango_group.mango_cache, account.key, MangoErrorCode::Default)?;
 
         Ok(mango_cache)
     }
@@ -769,7 +785,7 @@ pub struct HealthCache {
     quote: I80F48,
 
     /// This will be zero until update_health is called for the first time
-    health: [Option<I80F48>; 2],
+    health: [Option<I80F48>; NUM_HEALTHS],
 }
 
 impl HealthCache {
@@ -797,10 +813,10 @@ impl HealthCache {
                     &mango_cache.root_bank_cache[i],
                     mango_cache.price_cache[i].price,
                     i,
-                    if *open_orders_ais[i].key == Pubkey::default() {
+                    &if *open_orders_ais[i].key == Pubkey::default() {
                         None
                     } else {
-                        Some(&open_orders_ais[i])
+                        Some(load_open_orders(&open_orders_ais[i])?)
                     },
                 )?;
             }
@@ -815,12 +831,14 @@ impl HealthCache {
         }
         Ok(())
     }
-    pub fn init_vals_with_orders_vec(
+
+    // Accept T = &OpenOrders as well as Ref<OpenOrders>
+    pub fn init_vals_with_orders_vec<T: Deref<Target = serum_dex::state::OpenOrders>>(
         &mut self,
         mango_group: &MangoGroup,
         mango_cache: &MangoCache,
         mango_account: &MangoAccount,
-        open_orders_ais: &Vec<Option<&AccountInfo>>,
+        open_orders: &[Option<T>],
     ) -> MangoResult<()> {
         self.quote = mango_account.get_net(&mango_cache.root_bank_cache[QUOTE_INDEX], QUOTE_INDEX);
         for i in 0..mango_group.num_oracles {
@@ -829,7 +847,7 @@ impl HealthCache {
                     &mango_cache.root_bank_cache[i],
                     mango_cache.price_cache[i].price,
                     i,
-                    open_orders_ais[i],
+                    &open_orders[i],
                 )?;
             }
 
@@ -905,6 +923,7 @@ impl HealthCache {
                                 perp_market_info.init_asset_weight,
                                 perp_market_info.init_liab_weight,
                             ),
+                            HealthType::Equity => (ONE_I80F48, ONE_I80F48, ONE_I80F48, ONE_I80F48),
                         };
 
                     if self.active_assets.spot[i] {
@@ -933,6 +952,70 @@ impl HealthCache {
         }
     }
 
+    #[cfg(feature = "client")]
+    pub fn get_health_components(
+        &mut self,
+        mango_group: &MangoGroup,
+        health_type: HealthType,
+    ) -> (I80F48, I80F48) {
+        let (mut assets, mut liabilities) = if self.quote.is_negative() {
+            (ZERO_I80F48, -self.quote)
+        } else {
+            (self.quote, ZERO_I80F48)
+        };
+        for i in 0..mango_group.num_oracles {
+            let spot_market_info = &mango_group.spot_markets[i];
+            let perp_market_info = &mango_group.perp_markets[i];
+
+            let (spot_asset_weight, spot_liab_weight, perp_asset_weight, perp_liab_weight) =
+                match health_type {
+                    HealthType::Maint => (
+                        spot_market_info.maint_asset_weight,
+                        spot_market_info.maint_liab_weight,
+                        perp_market_info.maint_asset_weight,
+                        perp_market_info.maint_liab_weight,
+                    ),
+                    HealthType::Init => (
+                        spot_market_info.init_asset_weight,
+                        spot_market_info.init_liab_weight,
+                        perp_market_info.init_asset_weight,
+                        perp_market_info.init_liab_weight,
+                    ),
+                    HealthType::Equity => (ONE_I80F48, ONE_I80F48, ONE_I80F48, ONE_I80F48),
+                };
+
+            if self.active_assets.spot[i] {
+                let (base, quote) = self.spot[i];
+                if quote.is_negative() {
+                    liabilities -= quote;
+                } else {
+                    assets += quote;
+                }
+                if base.is_negative() {
+                    liabilities -= base * spot_liab_weight;
+                } else {
+                    assets += base * spot_asset_weight;
+                }
+            }
+
+            if self.active_assets.perps[i] {
+                let (base, quote) = self.perp[i];
+                if quote.is_negative() {
+                    liabilities -= quote;
+                } else {
+                    assets += quote;
+                }
+                if base.is_negative() {
+                    liabilities -= base * perp_liab_weight;
+                } else {
+                    assets += base * perp_asset_weight;
+                }
+            }
+        }
+
+        (assets, liabilities)
+    }
+
     pub fn update_quote(&mut self, mango_cache: &MangoCache, mango_account: &MangoAccount) {
         let quote = mango_account.get_net(&mango_cache.root_bank_cache[QUOTE_INDEX], QUOTE_INDEX);
         for i in 0..NUM_HEALTHS {
@@ -956,7 +1039,11 @@ impl HealthCache {
             &mango_cache.root_bank_cache[market_index],
             mango_cache.price_cache[market_index].price,
             market_index,
-            if *open_orders_ai.key == Pubkey::default() { None } else { Some(open_orders_ai) },
+            &if *open_orders_ai.key == Pubkey::default() {
+                None
+            } else {
+                Some(load_open_orders(open_orders_ai)?)
+            },
         )?;
 
         let (prev_base, prev_quote) = self.spot[market_index];
@@ -969,6 +1056,7 @@ impl HealthCache {
                 let (asset_weight, liab_weight) = match health_type {
                     HealthType::Maint => (smi.maint_asset_weight, smi.maint_liab_weight),
                     HealthType::Init => (smi.init_asset_weight, smi.init_liab_weight),
+                    HealthType::Equity => (ONE_I80F48, ONE_I80F48),
                 };
 
                 // Get health from val
@@ -1029,8 +1117,9 @@ impl HealthCache {
         bids_quantity: i64,
         asks_quantity: i64,
     ) -> MangoResult<I80F48> {
+        let info = &mango_group.perp_markets[market_index];
         let (base, quote) = mango_account.perp_accounts[market_index].sim_get_val(
-            &mango_group.perp_markets[market_index],
+            info,
             &mango_cache.perp_market_cache[market_index],
             mango_cache.price_cache[market_index].price,
             taker_base,
@@ -1045,6 +1134,7 @@ impl HealthCache {
         let (asset_weight, liab_weight) = match health_type {
             HealthType::Maint => (pmi.maint_asset_weight, pmi.maint_liab_weight),
             HealthType::Init => (pmi.init_asset_weight, pmi.init_liab_weight),
+            HealthType::Equity => (ONE_I80F48, ONE_I80F48),
         };
 
         // Get health from val
@@ -1061,7 +1151,27 @@ impl HealthCache {
         };
 
         let h = self.health[health_type as usize].ok_or(throw!())?;
-        Ok(h + curr_perp_health - prev_perp_health)
+
+        // Apply taker fees; Assume no referrer
+        let taker_fees = if taker_quote != 0 {
+            let taker_quote_native =
+                I80F48::from_num(info.quote_lot_size.checked_mul(taker_quote.abs()).unwrap());
+            let mut market_fees = info.taker_fee * taker_quote_native;
+            if let Some(mngo_index) = mango_group.find_token_index(&mngo_token::id()) {
+                let mngo_cache = &mango_cache.root_bank_cache[mngo_index];
+                let mngo_deposits = mango_account.get_native_deposit(mngo_cache, mngo_index)?;
+                let ref_mngo_req = I80F48::from_num(mango_group.ref_mngo_required);
+                if mngo_deposits < ref_mngo_req {
+                    market_fees += (I80F48::from_num(mango_group.ref_surcharge_centibps)
+                        / CENTIBPS_PER_UNIT)
+                        * taker_quote_native;
+                }
+            }
+            market_fees
+        } else {
+            ZERO_I80F48
+        };
+        Ok(h + curr_perp_health - prev_perp_health - taker_fees)
     }
 
     /// Update perp val and then update the healths
@@ -1088,6 +1198,7 @@ impl HealthCache {
                 let (asset_weight, liab_weight) = match health_type {
                     HealthType::Maint => (pmi.maint_asset_weight, pmi.maint_liab_weight),
                     HealthType::Init => (pmi.init_asset_weight, pmi.init_liab_weight),
+                    HealthType::Equity => (ONE_I80F48, ONE_I80F48),
                 };
 
                 // Get health from val
@@ -1149,8 +1260,17 @@ pub struct MangoAccount {
     /// Starts off as zero pubkey and points to the AdvancedOrders account
     pub advanced_orders_key: Pubkey,
 
+    /// Can this account be upgraded to v1 so it can be closed
+    pub not_upgradable: bool,
+
+    // Alternative authority/signer of transactions for a mango account
+    pub delegate: Pubkey,
+
     /// padding for expansions
-    pub padding: [u8; 38],
+    /// Note: future expansion can also be just done via isolated PDAs
+    /// which can be computed independently and dont need to be linked from
+    /// this account
+    pub padding: [u8; 5],
 }
 
 impl MangoAccount {
@@ -1161,16 +1281,16 @@ impl MangoAccount {
     ) -> MangoResult<RefMut<'a, Self>> {
         // load_mut checks for size already
         // mango account must be rent exempt to even be initialized
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         let mango_account: RefMut<'a, Self> = Self::load_mut(account)?;
 
         check_eq!(
             mango_account.meta_data.data_type,
             DataType::MangoAccount as u8,
-            EntropyErrorCode::InvalidAccountState
+            MangoErrorCode::InvalidAccountState
         )?;
-        check!(mango_account.meta_data.is_initialized, EntropyErrorCode::InvalidAccountState)?;
-        check_eq!(&mango_account.mango_group, mango_group_pk, EntropyErrorCode::InvalidAccount)?;
+        check!(mango_account.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
+        check_eq!(&mango_account.mango_group, mango_group_pk, MangoErrorCode::InvalidAccount)?;
 
         Ok(mango_account)
     }
@@ -1179,18 +1299,18 @@ impl MangoAccount {
         program_id: &Pubkey,
         mango_group_pk: &Pubkey,
     ) -> MangoResult<Ref<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
-        check_eq!(account.data_len(), size_of::<MangoAccount>(), EntropyErrorCode::Default)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
+        check_eq!(account.data_len(), size_of::<MangoAccount>(), MangoErrorCode::Default)?;
 
         let mango_account = Self::load(account)?;
 
         check_eq!(
             mango_account.meta_data.data_type,
             DataType::MangoAccount as u8,
-            EntropyErrorCode::Default
+            MangoErrorCode::Default
         )?;
-        check!(mango_account.meta_data.is_initialized, EntropyErrorCode::Default)?;
-        check_eq!(&mango_account.mango_group, mango_group_pk, EntropyErrorCode::Default)?;
+        check!(mango_account.meta_data.is_initialized, MangoErrorCode::Default)?;
+        check_eq!(&mango_account.mango_group, mango_group_pk, MangoErrorCode::Default)?;
 
         Ok(mango_account)
     }
@@ -1217,16 +1337,16 @@ impl MangoAccount {
         // TODO - actually try to hit this error
         check!(
             self.borrows[token_i].is_zero() || self.deposits[token_i].is_zero(),
-            EntropyErrorCode::MathError
+            MangoErrorCode::MathError
         )
     }
     pub fn checked_sub_borrow(&mut self, token_i: usize, v: I80F48) -> MangoResult<()> {
         self.borrows[token_i] = self.borrows[token_i].checked_sub(v).ok_or(math_err!())?;
 
-        check!(!self.borrows[token_i].is_negative(), EntropyErrorCode::MathError)?;
+        check!(!self.borrows[token_i].is_negative(), MangoErrorCode::MathError)?;
         check!(
             self.borrows[token_i].is_zero() || self.deposits[token_i].is_zero(),
-            EntropyErrorCode::MathError
+            MangoErrorCode::MathError
         )
     }
     pub fn checked_add_deposit(&mut self, token_i: usize, v: I80F48) -> MangoResult<()> {
@@ -1234,16 +1354,16 @@ impl MangoAccount {
 
         check!(
             self.borrows[token_i].is_zero() || self.deposits[token_i].is_zero(),
-            EntropyErrorCode::MathError
+            MangoErrorCode::MathError
         )
     }
     pub fn checked_sub_deposit(&mut self, token_i: usize, v: I80F48) -> MangoResult<()> {
         self.deposits[token_i] = self.deposits[token_i].checked_sub(v).ok_or(math_err!())?;
 
-        check!(!self.deposits[token_i].is_negative(), EntropyErrorCode::MathError)?;
+        check!(!self.deposits[token_i].is_negative(), MangoErrorCode::MathError)?;
         check!(
             self.borrows[token_i].is_zero() || self.deposits[token_i].is_zero(),
-            EntropyErrorCode::MathError
+            MangoErrorCode::MathError
         )
     }
 
@@ -1260,24 +1380,47 @@ impl MangoAccount {
     /// Return the token value and quote token value for this market taking into account open order
     /// but not doing asset weighting
     #[inline(always)]
-    fn get_spot_val(
+    fn get_spot_val<T: Deref<Target = serum_dex::state::OpenOrders>>(
         &self,
         bank_cache: &RootBankCache,
         price: I80F48,
         market_index: usize,
-        open_orders_ai: Option<&AccountInfo>,
+        open_orders: &Option<T>,
     ) -> MangoResult<(I80F48, I80F48)> {
         let base_net = self.get_net(bank_cache, market_index);
-        if !self.in_margin_basket[market_index] || open_orders_ai.is_none() {
+        if !self.in_margin_basket[market_index] || open_orders.is_none() {
             Ok((base_net * price, ZERO_I80F48))
         } else {
-            let open_orders = load_open_orders(open_orders_ai.unwrap())?;
             let (quote_free, quote_locked, base_free, base_locked) =
-                split_open_orders(&open_orders);
+                split_open_orders(open_orders.as_ref().unwrap().deref());
 
-            // Simulate the health if all bids are executed at current price
-            let bids_base_net: I80F48 = base_net + quote_locked / price + base_free + base_locked;
+            // Two "worst-case" scenarios are considered:
+            // 1. All bids are executed at current price, producing a base amount of bids_base_net
+            //    when all quote_locked are converted to base.
+            // 2. All asks are executed at current price, producing a base amount of asks_base_net
+            //    because base_locked would be converted to quote.
+            let bids_base_net: I80F48 = base_net + base_free + base_locked + quote_locked / price;
             let asks_base_net = base_net + base_free;
+
+            // Report the scenario that would have a worse outcome on health.
+            //
+            // Explanation: This function returns (base, quote) and the values later get used in
+            //     health += (if base > 0 { asset_weight } else { liab_weight }) * base + quote
+            // and here we return the scenario that will increase health the least.
+            //
+            // Correctness proof:
+            // - always bids_base_net >= asks_base_net
+            // - note that scenario 1 returns (a + b, c)
+            //         and scenario 2 returns (a,     c + b), and b >= 0, c >= 0
+            // - if a >= 0: scenario 1 will lead to less health as asset_weight <= 1.
+            // - if a < 0 and b <= -a: scenario 2 will lead to less health as liab_weight >= 1.
+            // - if a < 0 and b > -a:
+            //   The health contributions of both scenarios are identical if
+            //       asset_weight * (a + b) + c = liab_weight * a + c + b
+            //   <=> b = (asset_weight - liab_weight) / (1 - asset_weight) * a
+            //   <=> b = -2 a  since asset_weight + liab_weight = 2 by weight construction
+            //   So the worse scenario switches when a + b = -a.
+            // That means scenario 1 leads to less health whenever |a + b| > |a|.
 
             if bids_base_net.abs() > asks_base_net.abs() {
                 Ok((bids_base_net * price, quote_free))
@@ -1291,7 +1434,7 @@ impl MangoAccount {
     /// This function should be called any time you place a spot order
     pub fn add_to_basket(&mut self, market_index: usize) -> MangoResult<()> {
         if self.num_in_margin_basket == MAX_NUM_IN_MARGIN_BASKET {
-            check!(self.in_margin_basket[market_index], EntropyErrorCode::MarginBasketFull)
+            check!(self.in_margin_basket[market_index], MangoErrorCode::MarginBasketFull)
         } else {
             if !self.in_margin_basket[market_index] {
                 self.in_margin_basket[market_index] = true;
@@ -1319,7 +1462,7 @@ impl MangoAccount {
         } else if !self.in_margin_basket[market_index] && !is_empty {
             check!(
                 self.num_in_margin_basket < MAX_NUM_IN_MARGIN_BASKET,
-                EntropyErrorCode::MarginBasketFull
+                MangoErrorCode::MarginBasketFull
             )?;
             self.in_margin_basket[market_index] = true;
             self.num_in_margin_basket += 1;
@@ -1395,7 +1538,7 @@ impl MangoAccount {
         let open_orders_ai = packed_open_orders_ais
             .iter()
             .find(|ai| ai.key == &self.spot_open_orders[market_index])
-            .ok_or(throw_err!(EntropyErrorCode::InvalidOpenOrdersAccount))?;
+            .ok_or(throw_err!(MangoErrorCode::InvalidOpenOrdersAccount))?;
 
         check_open_orders(open_orders_ai, &mango_group.signer_key, &mango_group.dex_program_id)?;
         Ok(open_orders_ai)
@@ -1427,7 +1570,7 @@ impl MangoAccount {
                 check_eq!(
                     open_orders_ais[i].key,
                     &self.spot_open_orders[i],
-                    EntropyErrorCode::InvalidOpenOrdersAccount
+                    MangoErrorCode::InvalidOpenOrdersAccount
                 )?;
                 check_open_orders(
                     &open_orders_ais[i],
@@ -1470,7 +1613,7 @@ impl MangoAccount {
 
     ///
     pub fn remove_order(&mut self, slot: usize, quantity: i64) -> MangoResult<()> {
-        check!(self.order_market[slot] != FREE_ORDER_SLOT, EntropyErrorCode::Default)?;
+        check!(self.order_market[slot] != FREE_ORDER_SLOT, MangoErrorCode::Default)?;
         let market_index = self.order_market[slot] as usize;
 
         // accounting
@@ -1497,7 +1640,6 @@ impl MangoAccount {
         &mut self,
         market_index: usize,
         perp_market: &mut PerpMarket,
-        info: &PerpMarketInfo,
         cache: &PerpMarketCache,
         fill: &FillEvent,
     ) -> MangoResult<()> {
@@ -1507,10 +1649,10 @@ impl MangoAccount {
         pa.remove_taker_trade(base_change, quote_change);
         pa.change_base_position(perp_market, base_change);
         let quote = I80F48::from_num(perp_market.quote_lot_size * quote_change);
-        let fees = quote.abs() * info.taker_fee;
-        let serum_fees = quote.abs() * SERUM_TAKER_FEE;
-        perp_market.fees_accrued += fees + serum_fees;
-        pa.quote_position += quote - fees - serum_fees;
+
+        // fees are assessed at time of trade; no need to assess fees here
+
+        pa.quote_position += quote;
         Ok(())
     }
 
@@ -1518,7 +1660,6 @@ impl MangoAccount {
         &mut self,
         market_index: usize,
         perp_market: &mut PerpMarket,
-        info: &PerpMarketInfo,
         cache: &PerpMarketCache,
         fill: &FillEvent,
     ) -> MangoResult<()> {
@@ -1529,8 +1670,10 @@ impl MangoAccount {
         let (base_change, quote_change) = fill.base_quote_change(side);
         pa.change_base_position(perp_market, base_change);
         let quote = I80F48::from_num(perp_market.quote_lot_size.checked_mul(quote_change).unwrap());
-        let fees = quote.abs() * info.maker_fee;
-        perp_market.fees_accrued += fees;
+        let fees = quote.abs() * fill.maker_fee;
+        if !fill.market_fees_applied {
+            perp_market.fees_accrued += fees;
+        }
         pa.quote_position = pa.quote_position.checked_add(quote - fees).unwrap();
 
         // if versions don't match, no LM
@@ -1797,7 +1940,7 @@ impl PerpAccount {
         };
 
         // TODO OPT remove this sanity check if confident
-        check!(!points.is_negative(), EntropyErrorCode::MathError)?;
+        check!(!points.is_negative(), MangoErrorCode::MathError)?;
         self.convert_points(lmi, time_final, points);
         Ok(())
     }
@@ -1924,7 +2067,7 @@ impl PerpAccount {
     }
 
     /// All orders must be canceled and there must be no unprocessed FillEvents for this PerpAccount
-    pub fn is_liquidatable(&self) -> bool {
+    pub fn has_no_open_orders(&self) -> bool {
         self.bids_quantity == 0
             && self.asks_quantity == 0
             && self.taker_quote == 0
@@ -2006,12 +2149,12 @@ impl PerpMarket {
         lm_size_shift: u8, // right shift the depth number to prevent overflow
     ) -> MangoResult<RefMut<'a, Self>> {
         let mut state = Self::load_mut(account)?;
-        check!(account.owner == program_id, EntropyErrorCode::InvalidOwner)?;
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
         check!(
             rent.is_exempt(account.lamports(), size_of::<Self>()),
-            EntropyErrorCode::AccountNotRentExempt
+            MangoErrorCode::AccountNotRentExempt
         )?;
-        check!(!state.meta_data.is_initialized, EntropyErrorCode::Default)?;
+        check!(!state.meta_data.is_initialized, MangoErrorCode::Default)?;
 
         state.meta_data = MetaData::new_with_extra(
             DataType::PerpMarket,
@@ -2027,12 +2170,11 @@ impl PerpMarket {
         state.base_lot_size = base_lot_size;
 
         let vault = Account::unpack(&mngo_vault_ai.try_borrow_data()?)?;
-        check!(vault.owner == mango_group.signer_key, EntropyErrorCode::InvalidOwner)?;
-        check!(vault.delegate.is_none(), EntropyErrorCode::InvalidVault)?;
-        check!(vault.close_authority.is_none(), EntropyErrorCode::InvalidVault)?;
-        // Stop MNGO check
-        // check!(vault.mint == mngo_token::ID, EntropyErrorCode::InvalidVault)?;
-        check!(mngo_vault_ai.owner == &spl_token::ID, EntropyErrorCode::InvalidOwner)?;
+        check!(vault.owner == mango_group.signer_key, MangoErrorCode::InvalidOwner)?;
+        check!(vault.delegate.is_none(), MangoErrorCode::InvalidVault)?;
+        check!(vault.close_authority.is_none(), MangoErrorCode::InvalidVault)?;
+        check!(vault.mint == mngo_token::ID, MangoErrorCode::InvalidVault)?;
+        check!(mngo_vault_ai.owner == &spl_token::ID, MangoErrorCode::InvalidOwner)?;
         state.mngo_vault = *mngo_vault_ai.key;
 
         let clock = Clock::get()?;
@@ -2056,11 +2198,11 @@ impl PerpMarket {
         program_id: &Pubkey,
         mango_group_pk: &Pubkey,
     ) -> MangoResult<Ref<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         let state = Self::load(account)?;
-        check!(state.meta_data.is_initialized, EntropyErrorCode::Default)?;
-        check!(state.meta_data.data_type == DataType::PerpMarket as u8, EntropyErrorCode::Default)?;
-        check!(mango_group_pk == &state.mango_group, EntropyErrorCode::Default)?;
+        check!(state.meta_data.is_initialized, MangoErrorCode::Default)?;
+        check!(state.meta_data.data_type == DataType::PerpMarket as u8, MangoErrorCode::Default)?;
+        check!(mango_group_pk == &state.mango_group, MangoErrorCode::Default)?;
         Ok(state)
     }
 
@@ -2069,14 +2211,14 @@ impl PerpMarket {
         program_id: &Pubkey,
         mango_group_pk: &Pubkey,
     ) -> MangoResult<RefMut<'a, Self>> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         let state = Self::load_mut(account)?;
-        check!(state.meta_data.is_initialized, EntropyErrorCode::InvalidAccountState)?;
+        check!(state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
         check!(
             state.meta_data.data_type == DataType::PerpMarket as u8,
-            EntropyErrorCode::InvalidAccountState
+            MangoErrorCode::InvalidAccountState
         )?;
-        check!(mango_group_pk == &state.mango_group, EntropyErrorCode::InvalidAccountState)?;
+        check!(mango_group_pk == &state.mango_group, MangoErrorCode::InvalidAccountState)?;
         Ok(state)
     }
 
@@ -2109,8 +2251,8 @@ impl PerpMarket {
         const IMPACT_QUANTITY: i64 = 100;
 
         // Get current book price & compare it to index price
-        let bid = book.get_impact_price(Side::Bid, IMPACT_QUANTITY);
-        let ask = book.get_impact_price(Side::Ask, IMPACT_QUANTITY);
+        let bid = book.get_impact_price(Side::Bid, IMPACT_QUANTITY, now_ts);
+        let ask = book.get_impact_price(Side::Ask, IMPACT_QUANTITY, now_ts);
 
         const MAX_FUNDING: I80F48 = I80F48!(0.05);
         const MIN_FUNDING: I80F48 = I80F48!(-0.05);
@@ -2121,9 +2263,8 @@ impl PerpMarket {
                 let book_price = self.lot_to_native_price((bid + ask) / 2);
                 (book_price / index_price - ONE_I80F48).clamp(MIN_FUNDING, MAX_FUNDING)
             }
-            // Don't take any funding when order book is empty to avoid gaming.
-            (Some(_bid), None) => ZERO_I80F48,
-            (None, Some(_ask)) => ZERO_I80F48,
+            (Some(_bid), None) => MAX_FUNDING,
+            (None, Some(_ask)) => MIN_FUNDING,
             (None, None) => ZERO_I80F48,
         };
 
@@ -2191,7 +2332,7 @@ pub fn load_market_state<'a>(
     market_account: &'a AccountInfo,
     program_id: &Pubkey,
 ) -> MangoResult<RefMut<'a, serum_dex::state::MarketState>> {
-    check_eq!(market_account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
+    check_eq!(market_account.owner, program_id, MangoErrorCode::InvalidOwner)?;
 
     let state: RefMut<'a, serum_dex::state::MarketState> =
         RefMut::map(market_account.try_borrow_mut_data()?, |data| {
@@ -2206,7 +2347,7 @@ pub fn load_market_state<'a>(
 }
 
 fn strip_dex_padding<'a>(acc: &'a AccountInfo) -> MangoResult<Ref<'a, [u8]>> {
-    check!(acc.data_len() >= 12, EntropyErrorCode::Default)?;
+    check!(acc.data_len() >= 12, MangoErrorCode::Default)?;
     let unpadded_data: Ref<[u8]> = Ref::map(acc.try_borrow_data()?, |data| {
         let data_len = data.len() - 12;
         let (_, rest) = data.split_at(5);
@@ -2220,6 +2361,13 @@ pub fn load_open_orders<'a>(
     acc: &'a AccountInfo,
 ) -> Result<Ref<'a, serum_dex::state::OpenOrders>, ProgramError> {
     Ok(Ref::map(strip_dex_padding(acc)?, from_bytes))
+}
+pub fn load_open_orders_accounts<'a>(
+    accs: &Vec<Option<&'a AccountInfo>>,
+) -> Result<Vec<Option<Ref<'a, serum_dex::state::OpenOrders>>>, ProgramError> {
+    accs.iter()
+        .map(|ai_opt| Ok(if let Some(ai) = ai_opt { Some(load_open_orders(ai)?) } else { None }))
+        .collect::<Result<Vec<_>, _>>()
 }
 
 pub fn check_open_orders(
@@ -2235,13 +2383,13 @@ pub fn check_open_orders(
     let valid_flags = (serum_dex::state::AccountFlag::Initialized
         | serum_dex::state::AccountFlag::OpenOrders)
         .bits();
-    check_eq!(open_orders.account_flags, valid_flags, EntropyErrorCode::Default)?;
-    check_eq!(identity(open_orders.owner), owner.to_aligned_bytes(), EntropyErrorCode::Default)?;
-    check!(acc.owner == dex_program_id, EntropyErrorCode::InvalidOwner)
+    check_eq!(open_orders.account_flags, valid_flags, MangoErrorCode::Default)?;
+    check_eq!(identity(open_orders.owner), owner.to_aligned_bytes(), MangoErrorCode::Default)?;
+    check!(acc.owner == dex_program_id, MangoErrorCode::InvalidOwner)
 }
 
 fn strip_dex_padding_mut<'a>(acc: &'a AccountInfo) -> MangoResult<RefMut<'a, [u8]>> {
-    check!(acc.data_len() >= 12, EntropyErrorCode::Default)?;
+    check!(acc.data_len() >= 12, MangoErrorCode::Default)?;
     let unpadded_data: RefMut<[u8]> = RefMut::map(acc.try_borrow_mut_data()?, |data| {
         let data_len = data.len() - 12;
         let (_, rest) = data.split_at_mut(5);
@@ -2271,7 +2419,7 @@ pub fn load_bids_mut<'a>(
     sm: &RefMut<serum_dex::state::MarketState>,
     bids: &'a AccountInfo,
 ) -> MangoResult<RefMut<'a, serum_dex::critbit::Slab>> {
-    check_eq!(&bids.key.to_aligned_bytes(), &identity(sm.bids), EntropyErrorCode::Default)?;
+    check_eq!(&bids.key.to_aligned_bytes(), &identity(sm.bids), MangoErrorCode::Default)?;
 
     let orig_data = strip_dex_padding_mut(bids)?;
     let (header, buf) = strip_data_header_mut::<OrderBookStateHeader, u8>(orig_data)?;
@@ -2279,7 +2427,7 @@ pub fn load_bids_mut<'a>(
     check_eq!(
         &flags,
         &(serum_dex::state::AccountFlag::Initialized | serum_dex::state::AccountFlag::Bids),
-        EntropyErrorCode::Default
+        MangoErrorCode::Default
     )?;
     Ok(RefMut::map(buf, serum_dex::critbit::Slab::new))
 }
@@ -2288,14 +2436,14 @@ pub fn load_asks_mut<'a>(
     sm: &RefMut<serum_dex::state::MarketState>,
     asks: &'a AccountInfo,
 ) -> MangoResult<RefMut<'a, serum_dex::critbit::Slab>> {
-    check_eq!(&asks.key.to_aligned_bytes(), &identity(sm.asks), EntropyErrorCode::Default)?;
+    check_eq!(&asks.key.to_aligned_bytes(), &identity(sm.asks), MangoErrorCode::Default)?;
     let orig_data = strip_dex_padding_mut(asks)?;
     let (header, buf) = strip_data_header_mut::<OrderBookStateHeader, u8>(orig_data)?;
     let flags = BitFlags::from_bits(header.account_flags).unwrap();
     check_eq!(
         &flags,
         &(serum_dex::state::AccountFlag::Initialized | serum_dex::state::AccountFlag::Asks),
-        EntropyErrorCode::Default
+        MangoErrorCode::Default
     )?;
     Ok(RefMut::map(buf, serum_dex::critbit::Slab::new))
 }
@@ -2351,7 +2499,7 @@ pub struct PerpTriggerOrder {
     pub padding0: [u8; 1],
     pub client_order_id: u64,
     pub price: i64,
-    pub quantity: i64,
+    pub quantity: i64, // base quantity
     pub trigger_price: I80F48,
 
     /// Padding for expansion
@@ -2401,12 +2549,12 @@ pub struct AdvancedOrders {
 impl AdvancedOrders {
     pub fn init(account: &AccountInfo, program_id: &Pubkey, rent: &Rent) -> MangoResult<()> {
         let mut state: RefMut<Self> = Self::load_mut(account)?;
-        check!(account.owner == program_id, EntropyErrorCode::InvalidOwner)?;
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
         check!(
             rent.is_exempt(account.lamports(), size_of::<Self>()),
-            EntropyErrorCode::AccountNotRentExempt
+            MangoErrorCode::AccountNotRentExempt
         )?;
-        check!(!state.meta_data.is_initialized, EntropyErrorCode::InvalidAccountState)?;
+        check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
 
         state.meta_data = MetaData::new(DataType::AdvancedOrders, 0, true);
 
@@ -2419,13 +2567,83 @@ impl AdvancedOrders {
         mango_account: &MangoAccount,
     ) -> MangoResult<RefMut<'a, Self>> {
         let state: RefMut<'a, Self> = Self::load_mut(account)?;
-        check!(account.owner == program_id, EntropyErrorCode::InvalidOwner)?;
-        check!(state.meta_data.is_initialized, EntropyErrorCode::InvalidAccountState)?;
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
+        check!(state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
         check!(
             state.meta_data.data_type == DataType::AdvancedOrders as u8,
-            EntropyErrorCode::InvalidAccountState
+            MangoErrorCode::InvalidAccountState
         )?;
-        check!(&mango_account.advanced_orders_key == account.key, EntropyErrorCode::InvalidAccount)?;
+        check!(&mango_account.advanced_orders_key == account.key, MangoErrorCode::InvalidAccount)?;
         Ok(state)
+    }
+}
+
+/// Store the referrer's mango account
+#[derive(Copy, Clone, Pod, Loadable)]
+#[repr(C)]
+pub struct ReferrerMemory {
+    pub meta_data: MetaData,
+    pub referrer_mango_account: Pubkey,
+}
+
+impl ReferrerMemory {
+    pub fn init(
+        account: &AccountInfo,
+        program_id: &Pubkey,
+        referrer_mango_account_ai: &AccountInfo,
+    ) -> MangoResult {
+        let mut state: RefMut<Self> = Self::load_mut(account)?;
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
+        check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
+
+        state.meta_data = MetaData::new(DataType::ReferrerMemory, 0, true);
+        state.referrer_mango_account = *referrer_mango_account_ai.key;
+
+        Ok(())
+    }
+    pub fn load_mut_checked<'a>(
+        account: &'a AccountInfo,
+        program_id: &Pubkey,
+    ) -> MangoResult<RefMut<'a, Self>> {
+        // not really necessary because this is a PDA
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
+
+        let state: RefMut<'a, Self> = Self::load_mut(account)?;
+
+        check!(state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
+        check!(
+            state.meta_data.data_type == DataType::ReferrerMemory as u8,
+            MangoErrorCode::InvalidAccountState
+        )?;
+
+        Ok(state)
+    }
+}
+
+/// Register the referrer's id to be used in the URL
+#[derive(Copy, Clone, Pod, Loadable)]
+#[repr(C)]
+pub struct ReferrerIdRecord {
+    pub meta_data: MetaData,
+    pub referrer_mango_account: Pubkey,
+    pub id: [u8; INFO_LEN], // this id is one of the seeds
+}
+
+impl ReferrerIdRecord {
+    pub fn init(
+        account: &AccountInfo,
+        program_id: &Pubkey,
+        referrer_mango_account_ai: &AccountInfo,
+        referrer_id: [u8; INFO_LEN],
+    ) -> MangoResult {
+        let mut state: RefMut<Self> = Self::load_mut(account)?;
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
+        check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
+
+        state.meta_data = MetaData::new(DataType::ReferrerIdRecord, 0, true);
+        state.referrer_mango_account = *referrer_mango_account_ai.key;
+        state.id = referrer_id;
+
+        Ok(())
     }
 }

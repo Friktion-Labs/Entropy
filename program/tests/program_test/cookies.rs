@@ -1,4 +1,5 @@
 use fixed::types::I80F48;
+use fixed::FixedI128;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 
@@ -495,6 +496,46 @@ impl SpotMarketCookie {
     }
 
     #[allow(dead_code)]
+    pub async fn change_params(
+        &mut self,
+        test: &mut MangoProgramTest,
+        mango_group_pk: &Pubkey,
+        root_bank_pk: &Pubkey,
+        mint_index: usize,
+        init_leverage: Option<I80F48>,
+        maint_leverage: Option<I80F48>,
+        liquidation_fee: Option<I80F48>,
+        optimal_util: Option<I80F48>,
+        optimal_rate: Option<I80F48>,
+        max_rate: Option<I80F48>,
+        version: Option<u8>,
+    ) {
+        let mango_program_id = test.mango_program_id;
+        let mango_group_pk = mango_group_pk;
+        let spot_market_pk = self.market;
+        let root_bank_pk = root_bank_pk;
+        let admin_pk = test.get_payer_pk();
+
+        let instructions = [mango::instruction::change_spot_market_params(
+            &mango_program_id,
+            &mango_group_pk,
+            &spot_market_pk,
+            &root_bank_pk,
+            &admin_pk,
+            maint_leverage,
+            init_leverage,
+            liquidation_fee,
+            optimal_util,
+            optimal_rate,
+            max_rate,
+            version,
+        )
+        .unwrap()];
+
+        test.process_transaction(&instructions, None).await.unwrap();
+    }
+
+    #[allow(dead_code)]
     pub async fn place_order(
         &mut self,
         test: &mut MangoProgramTest,
@@ -532,6 +573,68 @@ impl SpotMarketCookie {
             .await;
         mango_group_cookie.current_spot_order_id += 1;
     }
+
+    #[allow(dead_code)]
+    pub async fn place_order_with_delegate(
+        &mut self,
+        test: &mut MangoProgramTest,
+        mango_group_cookie: &mut MangoGroupCookie,
+        user_index: usize,
+        delegate_user_index: usize,
+        side: serum_dex::matching::Side,
+        size: f64,
+        price: f64,
+    ) -> Result<(), TransportError> {
+        let limit_price = test.price_number_to_lots(&self.mint, price);
+        let max_coin_qty = test.base_size_number_to_lots(&self.mint, size);
+        let max_native_pc_qty_including_fees = match side {
+            serum_dex::matching::Side::Bid => {
+                self.mint.quote_lot as u64 * limit_price * max_coin_qty
+            }
+            serum_dex::matching::Side::Ask => std::u64::MAX,
+        };
+
+        let order = serum_dex::instruction::NewOrderInstructionV3 {
+            side: side,
+            limit_price: NonZeroU64::new(limit_price).unwrap(),
+            max_coin_qty: NonZeroU64::new(max_coin_qty).unwrap(),
+            max_native_pc_qty_including_fees: NonZeroU64::new(max_native_pc_qty_including_fees)
+                .unwrap(),
+            self_trade_behavior: serum_dex::instruction::SelfTradeBehavior::DecrementTake,
+            order_type: serum_dex::matching::OrderType::Limit,
+            client_order_id: mango_group_cookie.current_spot_order_id,
+            limit: u16::MAX,
+        };
+
+        test.place_spot_order_with_delegate(
+            &mango_group_cookie,
+            self,
+            user_index,
+            delegate_user_index,
+            order,
+        )
+        .await
+    }
+}
+
+pub struct PlacePerpOptions {
+    pub reduce_only: bool,
+    pub max_quote_size: Option<f64>,
+    pub order_type: mango::matching::OrderType,
+    pub limit: u8,
+    pub expiry_timestamp: Option<u64>,
+}
+
+impl Default for PlacePerpOptions {
+    fn default() -> Self {
+        Self {
+            reduce_only: false,
+            max_quote_size: None,
+            order_type: mango::matching::OrderType::Limit,
+            limit: 10,
+            expiry_timestamp: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -541,6 +644,9 @@ pub struct PerpMarketCookie {
     pub perp_market: PerpMarket,
 
     pub mint: MintCookie,
+
+    pub bids_pk: Pubkey,
+    pub asks_pk: Pubkey,
 }
 
 impl PerpMarketCookie {
@@ -556,7 +662,7 @@ impl PerpMarketCookie {
         let perp_market_pk = test.create_account(size_of::<PerpMarket>(), &mango_program_id).await;
         let (signer_pk, _signer_nonce) =
             create_signer_key_and_nonce(&mango_program_id, &mango_group_pk);
-        let max_num_events = 32;
+        let max_num_events = 256;
         let event_queue_pk = test
             .create_account(
                 size_of::<EventQueue>() + size_of::<AnyEvent>() * max_num_events,
@@ -610,6 +716,8 @@ impl PerpMarketCookie {
             address: perp_market_pk,
             perp_market: perp_market,
             mint: test.with_mint(mint_index),
+            bids_pk,
+            asks_pk,
         }
     }
 
@@ -620,22 +728,30 @@ impl PerpMarketCookie {
         mango_group_cookie: &mut MangoGroupCookie,
         user_index: usize,
         side: mango::matching::Side,
-        size: f64,
+        base_size: f64,
         price: f64,
+        options: PlacePerpOptions,
     ) {
-        let order_size = test.base_size_number_to_lots(&self.mint, size);
+        let order_base_size = test.base_size_number_to_lots(&self.mint, base_size);
+        let order_quote_size = options
+            .max_quote_size
+            .map(|s| ((s * test.quote_mint.unit) / self.mint.quote_lot) as u64)
+            .unwrap_or(u64::MAX);
         let order_price = test.price_number_to_lots(&self.mint, price);
 
-        test.place_perp_order(
+        test.place_perp_order2(
             &mango_group_cookie,
             self,
             user_index,
             side,
-            order_size,
+            order_base_size,
+            order_quote_size,
             order_price,
             mango_group_cookie.current_perp_order_id,
-            mango::matching::OrderType::Limit,
-            false,
+            options.order_type,
+            options.reduce_only,
+            options.expiry_timestamp,
+            options.limit,
         )
         .await;
 

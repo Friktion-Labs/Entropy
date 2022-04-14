@@ -1,4 +1,4 @@
-use crate::error::{check_assert, EntropyErrorCode, MangoResult, SourceFileId};
+use crate::error::{check_assert, MangoErrorCode, MangoResult, SourceFileId};
 use crate::matching::Side;
 use crate::state::{DataType, MetaData, PerpMarket};
 use crate::utils::strip_header_mut;
@@ -106,7 +106,7 @@ impl<'a, H: QueueHeader> Queue<'a, H> {
     }
 
     pub fn revert_pushes(&mut self, desired_len: usize) -> MangoResult<()> {
-        check!(desired_len <= self.header.count(), EntropyErrorCode::Default)?;
+        check!(desired_len <= self.header.count(), MangoErrorCode::Default)?;
         let len_diff = self.header.count() - desired_len;
         self.header.set_count(desired_len);
         self.header.decr_event_id(len_diff);
@@ -178,8 +178,8 @@ impl<'a> EventQueue<'a> {
         program_id: &Pubkey,
         perp_market: &PerpMarket,
     ) -> MangoResult<Self> {
-        check_eq!(account.owner, program_id, EntropyErrorCode::InvalidOwner)?;
-        check_eq!(&perp_market.event_queue, account.key, EntropyErrorCode::InvalidAccount)?;
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
+        check_eq!(&perp_market.event_queue, account.key, MangoErrorCode::InvalidAccount)?;
         Self::load_mut(account)
     }
 
@@ -191,13 +191,13 @@ impl<'a> EventQueue<'a> {
         // NOTE: check this first so we can borrow account later
         check!(
             rent.is_exempt(account.lamports(), account.data_len()),
-            EntropyErrorCode::AccountNotRentExempt
+            MangoErrorCode::AccountNotRentExempt
         )?;
 
         let mut state = Self::load_mut(account)?;
-        check!(account.owner == program_id, EntropyErrorCode::InvalidOwner)?;
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
 
-        check!(!state.header.meta_data.is_initialized, EntropyErrorCode::Default)?;
+        check!(!state.header.meta_data.is_initialized, MangoErrorCode::Default)?;
         state.header.meta_data = MetaData::new(DataType::EventQueue, 0, true);
 
         Ok(state)
@@ -229,7 +229,8 @@ pub struct FillEvent {
     pub maker_slot: u8,
     pub maker_out: bool, // true if maker order quantity == 0
     pub version: u8,
-    pub padding: [u8; 3],
+    pub market_fees_applied: bool,
+    pub padding: [u8; 2],
     pub timestamp: u64,
     pub seq_num: usize, // note: usize same as u64
 
@@ -282,7 +283,8 @@ impl FillEvent {
             maker_slot,
             maker_out,
             version,
-            padding: [0u8; 3],
+            market_fees_applied: true, // Since mango v3.3.5, market fees are adjusted at matching time
+            padding: [0u8; 2],
             timestamp,
             seq_num,
             maker,

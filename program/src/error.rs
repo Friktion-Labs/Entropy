@@ -4,7 +4,7 @@ use solana_program::program_error::ProgramError;
 use num_enum::IntoPrimitive;
 use thiserror::Error;
 
-pub type MangoResult<T = ()> = Result<T, EntropyError>;
+pub type MangoResult<T = ()> = Result<T, MangoError>;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -31,114 +31,119 @@ impl std::fmt::Display for SourceFileId {
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
-pub enum EntropyError {
+pub enum MangoError {
     #[error(transparent)]
     ProgramError(#[from] ProgramError),
     #[error("{mango_error_code}; {source_file_id}:{line}")]
-    EntropyErrorCode { mango_error_code: EntropyErrorCode, line: u32, source_file_id: SourceFileId },
+    MangoErrorCode { mango_error_code: MangoErrorCode, line: u32, source_file_id: SourceFileId },
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, IntoPrimitive)]
 #[repr(u32)]
-pub enum EntropyErrorCode {
-    #[error("EntropyErrorCode::InvalidCache")]
+pub enum MangoErrorCode {
+    #[error("MangoErrorCode::InvalidCache")] // 0
     InvalidCache,
-    #[error("EntropyErrorCode::InvalidOwner")]
+    #[error("MangoErrorCode::InvalidOwner")]
     InvalidOwner,
-    #[error("EntropyErrorCode::InvalidGroupOwner")]
+    #[error("MangoErrorCode::InvalidGroupOwner")]
     InvalidGroupOwner,
-    #[error("EntropyErrorCode::InvalidSignerKey")]
+    #[error("MangoErrorCode::InvalidSignerKey")]
     InvalidSignerKey,
-    #[error("EntropyErrorCode::InvalidAdminKey")]
+    #[error("MangoErrorCode::InvalidAdminKey")]
     InvalidAdminKey,
-    #[error("EntropyErrorCode::InvalidVault")]
+    #[error("MangoErrorCode::InvalidVault")]
     InvalidVault,
-    #[error("EntropyErrorCode::MathError")]
+    #[error("MangoErrorCode::MathError")]
     MathError,
-    #[error("EntropyErrorCode::InsufficientFunds")]
+    #[error("MangoErrorCode::InsufficientFunds")]
     InsufficientFunds,
-    #[error("EntropyErrorCode::InvalidToken")]
+    #[error("MangoErrorCode::InvalidToken")]
     InvalidToken,
-    #[error("EntropyErrorCode::InvalidMarket")]
+    #[error("MangoErrorCode::InvalidMarket")]
     InvalidMarket,
-    #[error("EntropyErrorCode::InvalidProgramId")]
+    #[error("MangoErrorCode::InvalidProgramId")] // 10
     InvalidProgramId,
-    #[error("EntropyErrorCode::GroupNotRentExempt")]
+    #[error("MangoErrorCode::GroupNotRentExempt")]
     GroupNotRentExempt,
-    #[error("EntropyErrorCode::OutOfSpace")]
+    #[error("MangoErrorCode::OutOfSpace")]
     OutOfSpace,
-    #[error("EntropyErrorCode::TooManyOpenOrders Reached the maximum number of open orders for this market")]
+    #[error("MangoErrorCode::TooManyOpenOrders Reached the maximum number of open orders for this market")]
     TooManyOpenOrders,
 
-    #[error("EntropyErrorCode::AccountNotRentExempt")]
+    #[error("MangoErrorCode::AccountNotRentExempt")]
     AccountNotRentExempt,
 
-    #[error("EntropyErrorCode::ClientIdNotFound")]
+    #[error("MangoErrorCode::ClientIdNotFound")]
     ClientIdNotFound,
-    #[error("EntropyErrorCode::InvalidNodeBank")]
+    #[error("MangoErrorCode::InvalidNodeBank")]
     InvalidNodeBank,
-    #[error("EntropyErrorCode::InvalidRootBank")]
+    #[error("MangoErrorCode::InvalidRootBank")]
     InvalidRootBank,
-    #[error("EntropyErrorCode::MarginBasketFull")]
+    #[error("MangoErrorCode::MarginBasketFull")]
     MarginBasketFull,
-    #[error("EntropyErrorCode::NotLiquidatable")]
+    #[error("MangoErrorCode::NotLiquidatable")]
     NotLiquidatable,
-    #[error("EntropyErrorCode::Unimplemented")]
+    #[error("MangoErrorCode::Unimplemented")] // 20
     Unimplemented,
-    #[error("EntropyErrorCode::PostOnly")]
+    #[error("MangoErrorCode::PostOnly")]
     PostOnly,
-    #[error("EntropyErrorCode::Bankrupt Invalid instruction for bankrupt account")]
+    #[error("MangoErrorCode::Bankrupt Invalid instruction for bankrupt account")]
     Bankrupt,
-    #[error("EntropyErrorCode::InsufficientHealth")]
+    #[error("MangoErrorCode::InsufficientHealth")]
     InsufficientHealth,
-    #[error("EntropyErrorCode::InvalidParam")]
+    #[error("MangoErrorCode::InvalidParam")]
     InvalidParam,
-    #[error("EntropyErrorCode::InvalidAccount")]
+    #[error("MangoErrorCode::InvalidAccount")]
     InvalidAccount,
-    #[error("EntropyErrorCode::InvalidAccountState")]
+    #[error("MangoErrorCode::InvalidAccountState")]
     InvalidAccountState,
-    #[error("EntropyErrorCode::SignerNecessary")]
+    #[error("MangoErrorCode::SignerNecessary")]
     SignerNecessary,
-    #[error("EntropyErrorCode::InsufficientLiquidity Not enough deposits in this node bank")]
+    #[error("MangoErrorCode::InsufficientLiquidity Not enough deposits in this node bank")]
     InsufficientLiquidity,
-    #[error("EntropyErrorCode::InvalidOrderId")]
+    #[error("MangoErrorCode::InvalidOrderId")]
     InvalidOrderId,
-    #[error("EntropyErrorCode::InvalidOpenOrdersAccount")]
+    #[error("MangoErrorCode::InvalidOpenOrdersAccount")] // 30
     InvalidOpenOrdersAccount,
-    #[error("EntropyErrorCode::BeingLiquidated Invalid instruction while being liquidated")]
+    #[error("MangoErrorCode::BeingLiquidated Invalid instruction while being liquidated")]
     BeingLiquidated,
-    #[error("EntropyErrorCode::InvalidRootBankCache Cache the root bank to resolve")]
+    #[error("MangoErrorCode::InvalidRootBankCache Cache the root bank to resolve")]
     InvalidRootBankCache,
-    #[error("EntropyErrorCode::InvalidPriceCache Cache the oracle price to resolve")]
+    #[error("MangoErrorCode::InvalidPriceCache Cache the oracle price to resolve")]
     InvalidPriceCache,
-    #[error("EntropyErrorCode::InvalidPerpMarketCache Cache the perp market to resolve")]
+    #[error("MangoErrorCode::InvalidPerpMarketCache Cache the perp market to resolve")]
     InvalidPerpMarketCache,
-    #[error("EntropyErrorCode::TriggerConditionFalse The trigger condition for this TriggerOrder is not met")]
+    #[error("MangoErrorCode::TriggerConditionFalse The trigger condition for this TriggerOrder is not met")]
     TriggerConditionFalse,
-    #[error("EntropyErrorCode::InvalidSeeds Invalid seeds. Unable to create PDA")]
+    #[error("MangoErrorCode::InvalidSeeds Invalid seeds. Unable to create PDA")]
     InvalidSeeds,
-    #[error("EntropyErrorCode::InvalidOracleType The oracle account was not recognized")]
+    #[error("MangoErrorCode::InvalidOracleType The oracle account was not recognized")]
     InvalidOracleType,
-    #[error("EntropyErrorCode::InvalidOraclePrice")]
+    #[error("MangoErrorCode::InvalidOraclePrice")]
     InvalidOraclePrice,
-    #[error("invalid serum fees vault")]
+    #[error("MangoErrorCode::MaxAccountsReached The maximum number of accounts for this group has been reached")]
+    MaxAccountsReached,
+    #[error("invalid serum vault")]
     InvalidSerumVault,
-    #[error("EntropyErrorCode::Default Check the source code for more info")]
+
+    #[error("MangoErrorCode::Default Check the source code for more info")] // 40
     Default = u32::MAX_VALUE,
+
+
 }
 
-impl From<EntropyError> for ProgramError {
-    fn from(e: EntropyError) -> ProgramError {
+impl From<MangoError> for ProgramError {
+    fn from(e: MangoError) -> ProgramError {
         match e {
-            EntropyError::ProgramError(pe) => pe,
-            EntropyError::EntropyErrorCode { mango_error_code, line: _, source_file_id: _ } => {
+            MangoError::ProgramError(pe) => pe,
+            MangoError::MangoErrorCode { mango_error_code, line: _, source_file_id: _ } => {
                 ProgramError::Custom(mango_error_code.into())
             }
         }
     }
 }
 
-impl From<serum_dex::error::DexError> for EntropyError {
+impl From<serum_dex::error::DexError> for MangoError {
     fn from(de: serum_dex::error::DexError) -> Self {
         let pe: ProgramError = de.into();
         pe.into()
@@ -148,14 +153,14 @@ impl From<serum_dex::error::DexError> for EntropyError {
 #[inline]
 pub fn check_assert(
     cond: bool,
-    mango_error_code: EntropyErrorCode,
+    mango_error_code: MangoErrorCode,
     line: u32,
     source_file_id: SourceFileId,
 ) -> MangoResult<()> {
     if cond {
         Ok(())
     } else {
-        Err(EntropyError::EntropyErrorCode { mango_error_code, line, source_file_id })
+        Err(MangoError::MangoErrorCode { mango_error_code, line, source_file_id })
     }
 }
 
@@ -179,8 +184,8 @@ macro_rules! declare_check_assert_macros {
         #[allow(unused_macros)]
         macro_rules! throw {
             () => {
-                EntropyError::EntropyErrorCode {
-                    mango_error_code: EntropyErrorCode::Default,
+                MangoError::MangoErrorCode {
+                    mango_error_code: MangoErrorCode::Default,
                     line: line!(),
                     source_file_id: $source_file_id,
                 }
@@ -190,7 +195,7 @@ macro_rules! declare_check_assert_macros {
         #[allow(unused_macros)]
         macro_rules! throw_err {
             ($err:expr) => {
-                EntropyError::EntropyErrorCode {
+                MangoError::MangoErrorCode {
                     mango_error_code: $err,
                     line: line!(),
                     source_file_id: $source_file_id,
@@ -201,8 +206,8 @@ macro_rules! declare_check_assert_macros {
         #[allow(unused_macros)]
         macro_rules! math_err {
             () => {
-                EntropyError::EntropyErrorCode {
-                    mango_error_code: EntropyErrorCode::MathError,
+                MangoError::MangoErrorCode {
+                    mango_error_code: MangoErrorCode::MathError,
                     line: line!(),
                     source_file_id: $source_file_id,
                 }
