@@ -1058,6 +1058,7 @@ impl<'a> Book<'a> {
         if post_allowed {
             // price limit check computed lazily to save CU on average
             let native_price = market.lot_to_native_price(price);
+            msg!("native price = {:?}, oracle price = {:?}", native_price, oracle_price);
             if native_price.checked_div(oracle_price).unwrap() > info.maint_liab_weight {
                 msg!("Posting on book disallowed due to price limits");
                 post_allowed = false;
