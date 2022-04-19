@@ -2517,9 +2517,6 @@ impl Processor {
         health_cache.update_perp_val(&mango_group, &mango_cache, &mango_account, market_index)?;
         let post_health = health_cache.get_health(&mango_group, HealthType::Init);
 
-        // msg!("health before: {:?}", pre_health);
-        // msg!("post health: {:?}", post_health);
-
         check!(
             post_health >= ZERO_I80F48 || (health_up_only && post_health >= pre_health),
             MangoErrorCode::InsufficientFunds

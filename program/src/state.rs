@@ -857,7 +857,7 @@ impl HealthCache {
                     &mango_group.perp_markets[i],
                     &mango_cache.perp_market_cache[i],
                     mango_cache.price_cache[i].price,
-                )?;
+                )?
             }
         }
         Ok(())
@@ -1223,6 +1223,8 @@ impl HealthCache {
 
         Ok(())
     }
+
+
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
