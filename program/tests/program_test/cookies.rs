@@ -82,33 +82,36 @@ impl MangoGroupCookie {
             AccountMeta::new(mango_group_pk, false),
             AccountMeta::new_readonly(admin_pk, true),
         ];
-    
+
         let instr = mango::instruction::MangoInstruction::DontSquare { dont_square: true };
-    
+
         let data = instr.pack();
         let dont_square_ix = Instruction { program_id: mango_program_id, accounts, data };
-    
-        let instructions = [mango::instruction::init_mango_group(
-            &mango_program_id,
-            &mango_group_pk,
-            &signer_pk,
-            &admin_pk,
-            &quote_mint_pk,
-            &quote_vault_pk,
-            &quote_node_bank_pk,
-            &quote_root_bank_pk,
-            &dao_vault_pk,
-            &msrm_vault_pk,
-            &fees_vault_pk,
-            &mango_cache_pk,
-            &serum_program_id,
-            signer_nonce,
-            5,
-            quote_optimal_util,
-            quote_optimal_rate,
-            quote_max_rate,
-        )
-        .unwrap(), dont_square_ix];
+
+        let instructions = [
+            mango::instruction::init_mango_group(
+                &mango_program_id,
+                &mango_group_pk,
+                &signer_pk,
+                &admin_pk,
+                &quote_mint_pk,
+                &quote_vault_pk,
+                &quote_node_bank_pk,
+                &quote_root_bank_pk,
+                &dao_vault_pk,
+                &msrm_vault_pk,
+                &fees_vault_pk,
+                &mango_cache_pk,
+                &serum_program_id,
+                signer_nonce,
+                5,
+                quote_optimal_util,
+                quote_optimal_rate,
+                quote_max_rate,
+            )
+            .unwrap(),
+            dont_square_ix,
+        ];
 
         test.process_transaction(&instructions, None).await.unwrap();
 

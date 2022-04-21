@@ -128,8 +128,6 @@ pub enum MangoErrorCode {
 
     #[error("MangoErrorCode::Default Check the source code for more info")] // 40
     Default = u32::MAX_VALUE,
-
-
 }
 
 impl From<MangoError> for ProgramError {
