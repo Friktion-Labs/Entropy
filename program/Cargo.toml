@@ -1,5 +1,5 @@
 [package]
-name = "entropy"
+name = "mango"
 version = "0.0.1"
 authors = ["blockworks", "friktion"]
 edition = "2021"

@@ -946,40 +946,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "entropy"
-version = "0.0.1"
-dependencies = [
- "anchor-lang 0.22.1",
- "arrayref",
- "bincode",
- "bs58 0.4.0",
- "bytemuck",
- "enumflags2",
- "fixed",
- "fixed-macro",
- "mango-common",
- "mango-logs",
- "mango-macro",
- "num_enum",
- "pyth-client",
- "rand 0.8.5",
- "safe-transmute",
- "serde",
- "serum_dex",
- "solana-logger",
- "solana-program",
- "solana-program-test",
- "solana-sdk",
- "spl-token",
- "static_assertions",
- "switchboard-aggregator",
- "switchboard-program",
- "switchboard-utils",
- "tarpc 0.26.2",
- "thiserror",
-]
-
-[[package]]
 name = "enum-ordinalize"
 version = "3.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1673,6 +1639,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "mango"
+version = "0.0.1"
+dependencies = [
+ "anchor-lang 0.22.1",
+ "arrayref",
+ "bincode",
+ "bs58 0.4.0",
+ "bytemuck",
+ "enumflags2",
+ "fixed",
+ "fixed-macro",
+ "mango-common",
+ "mango-logs",
+ "mango-macro",
+ "num_enum",
+ "pyth-client",
+ "rand 0.8.5",
+ "safe-transmute",
+ "serde",
+ "serum_dex",
+ "solana-logger",
+ "solana-program",
+ "solana-program-test",
+ "solana-sdk",
+ "spl-token",
+ "static_assertions",
+ "switchboard-aggregator",
+ "switchboard-program",
+ "switchboard-utils",
+ "tarpc 0.26.2",
+ "thiserror",
 ]
 
 [[package]]
