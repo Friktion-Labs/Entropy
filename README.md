@@ -3,7 +3,7 @@
 ## What is Entropy?
 Entropy is a derivatives exchange for those focused on trading non-linear and/or convex perpepetual & futures instruments. The first suite of products includes BTC power perpetuals and a BTC volatility perpetual.
 
-## Credit
+## Attribution
 The vast majority of the code contained in this repository is directly attributable to https://github.com/blockworks-foundation/mango-v3. Entropy was only possible due to the hard work and contributions of the Mango Markets core dev team and DAO contributors.
 
 ## ⚠️ Warning
