@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 
-
 use fixed::types::I80F48;
 use solana_program_test::*;
 
-
-use mango::state::{ZERO_I80F48};
+use mango::state::ZERO_I80F48;
 use program_test::assertions::*;
 use program_test::cookies::*;
 use program_test::scenarios::*;

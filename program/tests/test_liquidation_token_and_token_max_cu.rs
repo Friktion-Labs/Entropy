@@ -1,15 +1,10 @@
 mod program_test;
 
-
-
 use mango::state::*;
 use program_test::cookies::*;
 use program_test::scenarios::*;
 use program_test::*;
 use solana_program_test::*;
-
-
-
 
 /// for ix liquidate_token_and_token, test max cu usage (that it doesnt exceed 200k),
 /// by having spot open orders accounts, orders,

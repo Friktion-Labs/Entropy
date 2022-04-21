@@ -1,16 +1,9 @@
 mod program_test;
 
-
-
-
-
 use program_test::cookies::*;
 use program_test::scenarios::*;
 use program_test::*;
 use solana_program_test::*;
-
-
-
 
 /// for ix liquidate_perp_market, test max cu usage (that it doesnt exceed 200k),
 /// by having spot open orders accounts, orders,

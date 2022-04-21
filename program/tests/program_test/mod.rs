@@ -1,7 +1,5 @@
-
 use std::borrow::Borrow;
 use std::mem::size_of;
-
 
 use bincode::deserialize;
 use fixed::types::I80F48;

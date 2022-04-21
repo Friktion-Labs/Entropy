@@ -9,7 +9,6 @@ use program_test::scenarios::*;
 use program_test::*;
 use solana_program_test::*;
 
-
 use std::str::FromStr;
 
 pub fn get_deposit_for_user(

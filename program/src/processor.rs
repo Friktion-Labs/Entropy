@@ -4,7 +4,7 @@ use std::convert::{identity, TryFrom};
 use std::mem::size_of;
 use std::vec;
 
-use std::convert::{TryInto};
+use std::convert::TryInto;
 
 use switchboard_aggregator::AggregatorAccountData;
 
@@ -13,7 +13,7 @@ use arrayref::{array_ref, array_refs};
 use bytemuck::{cast, cast_mut, cast_ref};
 use fixed::types::I80F48;
 use fixed_macro::types::I80F48;
-use pyth_client::{PriceStatus};
+use pyth_client::PriceStatus;
 use serum_dex::instruction::NewOrderInstructionV3;
 use serum_dex::state::ToAlignedBytes;
 use solana_program::account_info::AccountInfo;
@@ -56,9 +56,7 @@ use crate::state::{
     MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS, NEG_ONE_I80F48, ONE_I80F48,
     QUOTE_INDEX, ZERO_I80F48,
 };
-use crate::utils::{
-    emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48,
-};
+use crate::utils::{emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48};
 
 declare_check_assert_macros!(SourceFileId::Processor);
 

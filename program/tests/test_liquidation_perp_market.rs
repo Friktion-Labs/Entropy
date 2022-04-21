@@ -2,13 +2,10 @@ mod program_test;
 
 use fixed::types::I80F48;
 
-
-
 use program_test::cookies::*;
 use program_test::scenarios::*;
 use program_test::*;
 use solana_program_test::*;
-
 
 use std::str::FromStr;
 
