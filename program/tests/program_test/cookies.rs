@@ -1,6 +1,6 @@
 use anchor_lang::prelude::AccountMeta;
 use fixed::types::I80F48;
-use fixed::FixedI128;
+
 use solana_program::instruction::Instruction;
 use std::mem::size_of;
 use std::num::NonZeroU64;
@@ -516,7 +516,7 @@ impl SpotMarketCookie {
         test: &mut MangoProgramTest,
         mango_group_pk: &Pubkey,
         root_bank_pk: &Pubkey,
-        mint_index: usize,
+        _mint_index: usize,
         init_leverage: Option<I80F48>,
         maint_leverage: Option<I80F48>,
         liquidation_fee: Option<I80F48>,

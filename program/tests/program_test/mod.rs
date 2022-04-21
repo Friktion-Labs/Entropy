@@ -1,7 +1,7 @@
-use anchor_lang::Key;
+
 use std::borrow::Borrow;
 use std::mem::size_of;
-use std::str::FromStr;
+
 
 use bincode::deserialize;
 use fixed::types::I80F48;
@@ -1694,7 +1694,7 @@ impl MangoProgramTest {
         let mango_account = mango_group_cookie.mango_accounts[user_index].mango_account;
         let mango_account_pk = mango_group_cookie.mango_accounts[user_index].address;
 
-        let user = Keypair::from_base58_string(&self.users[user_index].to_base58_string());
+        let _user = Keypair::from_base58_string(&self.users[user_index].to_base58_string());
         let delegate_user =
             Keypair::from_base58_string(&self.users[delegate_user_index].to_base58_string());
         let user_token_account = self.with_user_token_account(user_index, mint_index);
@@ -1762,7 +1762,7 @@ impl MangoProgramTest {
         let mango_account_pk = mango_group_cookie.mango_accounts[user_index].address;
 
         let user = Keypair::from_base58_string(&self.users[user_index].to_base58_string());
-        let delegate =
+        let _delegate =
             Keypair::from_base58_string(&self.users[delegate_user_index].to_base58_string());
 
         let instructions = [set_delegate(

@@ -874,8 +874,8 @@ impl HealthCache {
                 // apply weights, cache result, return health
                 let mut health = self.quote;
                 for i in 0..mango_group.num_oracles {
-                    let spot_market_info = &mango_group.spot_markets[i];
-                    let perp_market_info = &mango_group.perp_markets[i];
+                    let _spot_market_info = &mango_group.spot_markets[i];
+                    let _perp_market_info = &mango_group.perp_markets[i];
 
                     if self.active_assets.spot[i] {
                         let (base, quote) = self.spot[i];

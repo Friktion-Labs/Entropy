@@ -4,8 +4,8 @@ use std::convert::{identity, TryFrom};
 use std::mem::size_of;
 use std::vec;
 
-use std::convert::{From, TryInto};
-use switchboard_aggregator::decimal::SwitchboardDecimal;
+use std::convert::{TryInto};
+
 use switchboard_aggregator::AggregatorAccountData;
 
 use anchor_lang::prelude::emit;
@@ -13,7 +13,7 @@ use arrayref::{array_ref, array_refs};
 use bytemuck::{cast, cast_mut, cast_ref};
 use fixed::types::I80F48;
 use fixed_macro::types::I80F48;
-use pyth_client::{Price, PriceStatus};
+use pyth_client::{PriceStatus};
 use serum_dex::instruction::NewOrderInstructionV3;
 use serum_dex::state::ToAlignedBytes;
 use solana_program::account_info::AccountInfo;
@@ -57,7 +57,7 @@ use crate::state::{
     QUOTE_INDEX, ZERO_I80F48,
 };
 use crate::utils::{
-    emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48, serum_fees_mod,
+    emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48,
 };
 
 declare_check_assert_macros!(SourceFileId::Processor);
@@ -7042,7 +7042,7 @@ fn read_oracle(
             }
             OracleType::SwitchboardV2 => {
                 msg!("switchboard V2");
-                let mut value = get_switchboard_value(oracle_ai).unwrap();
+                let value = get_switchboard_value(oracle_ai).unwrap();
 
                 let decimals = quote_decimals.checked_sub(base_decimals).unwrap();
 

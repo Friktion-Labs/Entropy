@@ -2,15 +2,15 @@
 mod program_test;
 
 use fixed::types::I80F48;
-use fixed::FixedI128;
-use mango::matching::Side;
+
+
 use mango::state::*;
 use program_test::cookies::*;
 use program_test::scenarios::*;
 use program_test::*;
 use solana_program_test::*;
-use std::cmp::min;
-use std::ops::Div;
+
+
 use std::str::FromStr;
 
 fn get_deposit_for_user(
@@ -55,7 +55,7 @@ async fn test_liquidation_token_and_perp_basic() {
     let mint_index: usize = 0;
     let base_price: f64 = 10_000.0;
     let base_size: f64 = 1.0;
-    let clock = test.get_clock().await;
+    let _clock = test.get_clock().await;
 
     // Set oracles
     mango_group_cookie.set_oracle(&mut test, mint_index, base_price).await;
