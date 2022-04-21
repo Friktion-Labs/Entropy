@@ -1,4 +1,10 @@
-# Mango Markets V3 - Decentralized Margin Trading
+# Entropy - Power Perpetuals Exchange (https://entropy.trade)
+
+## What is Entropy?
+Entropy is a derivatives exchange for those focused on trading non-linear and/or convex perpepetual & futures instruments. The first suite of products includes BTC power perpetuals and a BTC volatility perpetual.
+
+## Credit
+The vast majority of the code contained in this repository is directly attributable to https://github.com/blockworks-foundation/mango-v3. Entropy was only possible due to the hard work and contributions of the Mango Markets core dev team and DAO contributors.
 
 ## ⚠️ Warning
 Any content produced by Blockworks, or developer resources that Blockworks provides, are for educational and inspiration purposes only. Blockworks does not encourage, induce or sanction the deployment of any such applications in violation of applicable laws or regulations.
