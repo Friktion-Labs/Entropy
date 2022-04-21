@@ -4,16 +4,15 @@ use std::convert::{identity, TryFrom};
 use std::mem::size_of;
 use std::vec;
 
-use switchboard_aggregator::AggregatorAccountData;
-use switchboard_aggregator::decimal::SwitchboardDecimal;
 use std::convert::{From, TryInto};
+use switchboard_aggregator::decimal::SwitchboardDecimal;
+use switchboard_aggregator::AggregatorAccountData;
 
-
-use fixed_macro::types::I80F48;
 use anchor_lang::prelude::emit;
 use arrayref::{array_ref, array_refs};
 use bytemuck::{cast, cast_mut, cast_ref};
 use fixed::types::I80F48;
+use fixed_macro::types::I80F48;
 use pyth_client::{Price, PriceStatus};
 use serum_dex::instruction::NewOrderInstructionV3;
 use serum_dex::state::ToAlignedBytes;
@@ -57,7 +56,9 @@ use crate::state::{
     MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS, NEG_ONE_I80F48, ONE_I80F48,
     QUOTE_INDEX, ZERO_I80F48,
 };
-use crate::utils::{emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48, serum_fees_mod};
+use crate::utils::{
+    emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48, serum_fees_mod,
+};
 
 declare_check_assert_macros!(SourceFileId::Processor);
 
@@ -1158,9 +1159,15 @@ impl Processor {
             let oracle_index = mango_group.find_oracle_index(oracle_ai.key).ok_or(throw!())?;
             // let oracle_info = oracle_map.get(&oracle_index);
 
-            let sub_oracle_index = if oracle_index == 0 && !mango_group.dont_square { 1 } else { oracle_index };
-            let sub_oracle_ai = if oracle_index == 0 && !mango_group.dont_square { substitute_oracle } else { oracle_ai };
-            let should_square = if oracle_index == 0 && !mango_group.dont_square { true } else { false };
+            let sub_oracle_index =
+                if oracle_index == 0 && !mango_group.dont_square { 1 } else { oracle_index };
+            let sub_oracle_ai = if oracle_index == 0 && !mango_group.dont_square {
+                substitute_oracle
+            } else {
+                oracle_ai
+            };
+            let should_square =
+                if oracle_index == 0 && !mango_group.dont_square { true } else { false };
 
             if let Ok(mut price) = read_oracle(
                 &mango_group,
@@ -3135,7 +3142,7 @@ impl Processor {
         // Settle Serum Fees pro rata with exchange fees
         // + perp_market.serum_fees_accrued;
 
-               // ignore these cases and fail silently so transactions can continue
+        // ignore these cases and fail silently so transactions can continue
         if !(pnl.is_negative() && perp_market.fees_accrued.is_positive()) {
             msg!("ignore settle_fees instruction: pnl.is_negative()={} perp_market.fees_accrued.is_positive()={}", pnl.is_negative(), perp_market.fees_accrued.is_positive());
             return Ok(());
@@ -6942,11 +6949,10 @@ fn invoke_transfer<'a>(
 
 #[inline(never)]
 fn get_switchboard_value(oracle_ai: &AccountInfo) -> MangoResult<I80F48> {
-    let switchboard_decimal =
-        AggregatorAccountData::new(oracle_ai)?.get_result()?;
+    let switchboard_decimal = AggregatorAccountData::new(oracle_ai)?.get_result()?;
     let temp_decimal: f64 = switchboard_decimal.try_into().unwrap();
-    
-        // .try_into().unwrap();
+
+    // .try_into().unwrap();
     let value = I80F48::from_num(temp_decimal);
     Ok(value)
 }

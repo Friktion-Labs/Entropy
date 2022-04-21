@@ -70,11 +70,11 @@ pub fn determine_oracle_type(account: &AccountInfo) -> OracleType {
         OracleType::Switchboard
     } else if magic == STUB_MAGIC {
         OracleType::Stub
-    } 
+    }
     //  else if account.owner == &Pubkey::from_str("2TfB33aLaneQb5TNVwyDz3jSZXS6jdW2ARw1Dgf84XCG").unwrap() {
     //     return OracleType::SwitchboardV2;
     // }
-     else {
+    else {
         OracleType::Unknown
     }
 }

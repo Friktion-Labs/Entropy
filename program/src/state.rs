@@ -862,9 +862,12 @@ impl HealthCache {
         }
         Ok(())
     }
-    
 
-    pub fn get_health_unweighted(&mut self, mango_group: &MangoGroup, health_type: HealthType) -> I80F48 {
+    pub fn get_health_unweighted(
+        &mut self,
+        mango_group: &MangoGroup,
+        health_type: HealthType,
+    ) -> I80F48 {
         let health_index = health_type as usize;
         match self.health[health_index] {
             None => {
@@ -1223,8 +1226,6 @@ impl HealthCache {
 
         Ok(())
     }
-
-
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
@@ -2272,11 +2273,11 @@ impl PerpMarket {
         };
 
         // TODO TEST consider what happens if time_factor is very small. Can funding_delta == 0 when diff != 0?
-        
+
         // DAI: Use 7-day funding for power perps.
-        let funding_period = if market_index == 0 {WEEK} else {DAY};
+        let funding_period = if market_index == 0 { WEEK } else { DAY };
         let time_factor = I80F48::from_num(now_ts - self.last_updated) / funding_period;
-        
+
         let funding_delta: I80F48 = index_price
             .checked_mul(diff)
             .unwrap()

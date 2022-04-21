@@ -1059,8 +1059,8 @@ pub enum MangoInstruction {
     },
 
     DontSquare {
-        dont_square: bool
-    }
+        dont_square: bool,
+    },
 }
 
 impl MangoInstruction {
@@ -1556,9 +1556,7 @@ impl MangoInstruction {
             }
             66 => {
                 let data_arr = array_ref![data, 0, 1];
-                MangoInstruction::DontSquare {
-                    dont_square: data_arr[0] != 0
-                }
+                MangoInstruction::DontSquare { dont_square: data_arr[0] != 0 }
             }
             _ => {
                 return None;

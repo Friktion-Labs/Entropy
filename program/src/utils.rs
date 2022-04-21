@@ -2,8 +2,8 @@ use bytemuck::{bytes_of, cast_slice_mut, from_bytes_mut, Contiguous, Pod};
 
 use crate::error::MangoResult;
 use crate::matching::Side;
+use crate::state::RootBank;
 use crate::state::ONE_I80F48;
-use crate::state::{RootBank};
 use fixed::types::I80F48;
 use solana_program::account_info::AccountInfo;
 use solana_program::program_error::ProgramError;
@@ -11,7 +11,7 @@ use solana_program::pubkey::Pubkey;
 use std::cell::RefMut;
 use std::mem::size_of;
 
-pub mod serum_fees_mod  {
+pub mod serum_fees_mod {
     use solana_program::declare_id;
 
     declare_id!("APBH71knizgDfsY3kYkv9PDhTizaJXywC1XNNRLwdKHQ");
