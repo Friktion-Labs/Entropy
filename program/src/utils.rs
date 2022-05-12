@@ -11,6 +11,8 @@ use solana_program::pubkey::Pubkey;
 use std::cell::RefMut;
 use std::mem::size_of;
 
+pub const SPOT_OTC_ORDER_PREFIX: &str = "spot_otc_order";
+
 pub mod serum_fees_mod {
     use solana_program::declare_id;
 

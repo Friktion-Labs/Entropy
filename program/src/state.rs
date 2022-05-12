@@ -2352,6 +2352,7 @@ pub enum OtcOrderStatus {
 pub struct OtcOrder {
     pub meta_data: MetaData,
     pub price: I80F48,
+    pub size: I80F48,
     pub counterparty: Pubkey,
     pub expires: UnixTimestamp,
     pub status: OtcOrderStatus,
@@ -2363,8 +2364,9 @@ impl OtcOrder {
         program_id: &Pubkey,
         rent: &Rent,
         price: I80F48,
-        counterparty: &Pubkey,
+        size: I80F48,
         expires: UnixTimestamp,
+        counterparty: &Pubkey,
     ) -> MangoResult<()> {
         let mut state: RefMut<Self> = Self::load_mut(account)?;
 
@@ -2377,6 +2379,7 @@ impl OtcOrder {
 
         state.meta_data = MetaData::new(DataType::OtcOrder, 0, true);
         state.price = price;
+        state.size = size;
         state.counterparty = *counterparty;
         state.expires = expires;
         state.status = OtcOrderStatus::Created;

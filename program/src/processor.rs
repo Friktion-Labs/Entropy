@@ -38,7 +38,6 @@ use mango_logs::{
     UpdateFundingLog, UpdateRootBankLog, WithdrawLog,
 };
 
-use crate::error::{check_assert, MangoError, MangoErrorCode, MangoResult, SourceFileId};
 use crate::ids::{msrm_token, srm_token};
 use crate::instruction::MangoInstruction;
 use crate::matching::{Book, BookSide, OrderType, Side};
@@ -58,6 +57,10 @@ use crate::state::{
 };
 use crate::utils::{
     emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48, serum_fees_mod,
+};
+use crate::{
+    error::{check_assert, MangoError, MangoErrorCode, MangoResult, SourceFileId},
+    utils::SPOT_OTC_ORDER_PREFIX,
 };
 
 declare_check_assert_macros!(SourceFileId::Processor);
@@ -6280,15 +6283,26 @@ impl Processor {
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         price: I80F48,
+        size: I80F48,
         expires: UnixTimestamp,
     ) -> MangoResult {
-        const NUM_FIXED: usize = 6;
+        const NUM_FIXED: usize = 7;
 
-        let [otc_order_pda_ai, otc_order_owner_ai, otc_order_counterparty_ai, clock_ai, rent_ai, system_program_ai] =
+        let [otc_order_pda_ai, mango_group_ai, mango_account_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
+
+        let _ = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let mango_account_state =
+            MangoAccount::load_checked(mango_account_ai, program_id, mango_group_ai.key)?;
 
         // Check accounts
         check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(
+            otc_order_owner_ai.key,
+            mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
         check_eq!(
             clock_ai.key,
             &solana_program::sysvar::clock::id(),
@@ -6304,8 +6318,15 @@ impl Processor {
             &solana_program::system_program::id(),
             MangoErrorCode::InvalidProgramId
         )?;
-        // TODO: Define PDA seeds
-        let (otc_order_pda, bump_seed) = Pubkey::find_program_address(&[], program_id);
+
+        let otc_pda_seeds: &[&[u8]] = &[
+            SPOT_OTC_ORDER_PREFIX.as_bytes(),
+            &price.to_le_bytes(),
+            &size.to_le_bytes(),
+            &expires.to_le_bytes(),
+            mango_account_ai.key.as_ref(),
+        ];
+        let (otc_order_pda, bump_seed) = Pubkey::find_program_address(otc_pda_seeds, program_id);
         check!(&otc_order_pda == otc_order_pda_ai.key, MangoErrorCode::InvalidAccount)?;
 
         let clock = Clock::get()?;
@@ -6321,7 +6342,7 @@ impl Processor {
             program_id,
             system_program_ai,
             otc_order_pda_ai,
-            &[],
+            &[otc_pda_seeds, bump_seed],
             &[],
         )?;
 
@@ -6331,11 +6352,10 @@ impl Processor {
             program_id,
             &rent,
             price,
-            &otc_order_counterparty_ai.key,
+            size,
             expires,
+            &mango_account_ai.key,
         )?;
-
-        // TODO: Transfer funds to escrow, business logic, etc..
 
         Ok(())
     }
@@ -6864,9 +6884,9 @@ impl Processor {
                 msg!("Mango: DontSquare");
                 Self::change_dont_square(program_id, accounts, dont_square)
             }
-            MangoInstruction::CreateSpotOtcOrder { price, expires } => {
+            MangoInstruction::CreateSpotOtcOrder { price, size, expires } => {
                 msg!("Mango: CreateSpotOtcOrder");
-                Self::create_spot_otc_order(program_id, accounts, price, expires)
+                Self::create_spot_otc_order(program_id, accounts, price, size, expires)
             }
         }
     }

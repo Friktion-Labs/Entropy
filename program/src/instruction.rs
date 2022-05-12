@@ -1067,14 +1067,16 @@ pub enum MangoInstruction {
     ///
     /// Accounts:
     ///
-    /// 0. `[writable]` OTC order PDA: `[]`.
-    /// 1. `[signer]` Order owner(initiator).
-    /// 2. `[]` Order counterparty.
-    /// 3. `[]` Clock sysvar.
-    /// 4. `[]` Rent sysvar.
-    /// 5. `[]` System program.
+    /// 0. `[writable]` OTC order PDA: `["spot_otc_order", price, size, expires, counterparty]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner.
+    /// 4. `[]` Clock sysvar.
+    /// 5. `[]` Rent sysvar.
+    /// 6. `[]` System program.
     CreateSpotOtcOrder {
         price: I80F48,
+        size: I80F48,
         expires: UnixTimestamp,
     },
 }
