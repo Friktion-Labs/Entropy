@@ -12,6 +12,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::{Deserialize, Serialize};
 use serum_dex::state::ToAlignedBytes;
 use solana_program::account_info::AccountInfo;
+use solana_program::clock::UnixTimestamp;
 use solana_program::program_error::ProgramError;
 use solana_program::program_pack::Pack;
 use solana_program::pubkey::Pubkey;
@@ -85,6 +86,7 @@ pub enum DataType {
     AdvancedOrders,
     ReferrerMemory,
     ReferrerIdRecord,
+    OtcOrder,
 }
 
 const NUM_HEALTHS: usize = 3;
@@ -2329,6 +2331,57 @@ impl PerpMarket {
         cache.short_funding = self.short_funding;
         cache.long_funding = self.long_funding;
         Ok(socialized_loss)
+    }
+}
+
+/// TODO: Doc.
+#[derive(
+    Eq, PartialEq, Copy, Clone, TryFromPrimitive, IntoPrimitive, Serialize, Deserialize, Debug,
+)]
+#[serde(into = "u8", try_from = "u8")]
+#[repr(u8)]
+pub enum OtcOrderStatus {
+    Created = 0,
+    Filled,
+    Closed,
+}
+
+/// TODO: Doc.
+#[derive(Copy, Clone, Pod, Loadable)]
+#[repr(C)]
+pub struct OtcOrder {
+    pub meta_data: MetaData,
+    pub price: I80F48,
+    pub counterparty: Pubkey,
+    pub expires: UnixTimestamp,
+    pub status: OtcOrderStatus,
+}
+
+impl OtcOrder {
+    pub fn init(
+        account: &AccountInfo,
+        program_id: &Pubkey,
+        rent: &Rent,
+        price: I80F48,
+        counterparty: &Pubkey,
+        expires: UnixTimestamp,
+    ) -> MangoResult<()> {
+        let mut state: RefMut<Self> = Self::load_mut(account)?;
+
+        check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
+        check!(
+            rent.is_exempt(account.lamports(), size_of::<Self>()),
+            MangoErrorCode::AccountNotRentExempt
+        )?;
+        check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
+
+        state.meta_data = MetaData::new(DataType::OtcOrder, 0, true);
+        state.price = price;
+        state.counterparty = *counterparty;
+        state.expires = expires;
+        state.status = OtcOrderStatus::Created;
+
+        Ok(())
     }
 }
 

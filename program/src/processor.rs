@@ -17,7 +17,7 @@ use pyth_client::{Price, PriceStatus};
 use serum_dex::instruction::NewOrderInstructionV3;
 use serum_dex::state::ToAlignedBytes;
 use solana_program::account_info::AccountInfo;
-use solana_program::clock::Clock;
+use solana_program::clock::{Clock, UnixTimestamp};
 use solana_program::entrypoint::ProgramResult;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::msg;
@@ -49,7 +49,7 @@ use crate::state::PYTH_CONF_FILTER;
 use crate::state::{
     check_open_orders, load_asks_mut, load_bids_mut, load_market_state, load_open_orders,
     load_open_orders_accounts, AdvancedOrderType, AdvancedOrders, AssetType, DataType, HealthCache,
-    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, PerpMarket,
+    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, OtcOrder, PerpMarket,
     PerpMarketCache, PerpMarketInfo, PerpTriggerOrder, PriceCache, ReferrerIdRecord,
     ReferrerMemory, RootBank, RootBankCache, SpotMarketInfo, TokenInfo, TriggerCondition,
     UserActiveAssets, ADVANCED_ORDER_FEE, FREE_ORDER_SLOT, INFO_LEN, MAX_ADVANCED_ORDERS,
@@ -6275,6 +6275,71 @@ impl Processor {
         Ok(())
     }
 
+    #[inline(never)]
+    fn create_spot_otc_order(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        price: I80F48,
+        expires: UnixTimestamp,
+    ) -> MangoResult {
+        const NUM_FIXED: usize = 6;
+
+        let [otc_order_pda_ai, otc_order_owner_ai, otc_order_counterparty_ai, clock_ai, rent_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        // Check accounts
+        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(
+            clock_ai.key,
+            &solana_program::sysvar::clock::id(),
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            rent_ai.key,
+            &solana_program::sysvar::rent::id(),
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+        // TODO: Define PDA seeds
+        let (otc_order_pda, bump_seed) = Pubkey::find_program_address(&[], program_id);
+        check!(&otc_order_pda == otc_order_pda_ai.key, MangoErrorCode::InvalidAccount)?;
+
+        let clock = Clock::get()?;
+        let rent = Rent::get()?;
+
+        check!(clock.unix_timestamp < expires, ProgramError::InvalidArgument)?;
+
+        // Create `state::OtcOrder` account on-chain
+        create_pda_account(
+            otc_order_owner_ai,
+            &rent,
+            size_of::<OtcOrder>(),
+            program_id,
+            system_program_ai,
+            otc_order_pda_ai,
+            &[],
+            &[],
+        )?;
+
+        // Initialize `state::OtcOrder`
+        OtcOrder::init(
+            otc_order_pda_ai,
+            program_id,
+            &rent,
+            price,
+            &otc_order_counterparty_ai.key,
+            expires,
+        )?;
+
+        // TODO: Transfer funds to escrow, business logic, etc..
+
+        Ok(())
+    }
+
     pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> MangoResult {
         let instruction =
             MangoInstruction::unpack(data).ok_or(ProgramError::InvalidInstructionData)?;
@@ -6798,6 +6863,10 @@ impl Processor {
             MangoInstruction::DontSquare { dont_square } => {
                 msg!("Mango: DontSquare");
                 Self::change_dont_square(program_id, accounts, dont_square)
+            }
+            MangoInstruction::CreateSpotOtcOrder { price, expires } => {
+                msg!("Mango: CreateSpotOtcOrder");
+                Self::create_spot_otc_order(program_id, accounts, price, expires)
             }
         }
     }

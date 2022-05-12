@@ -5,6 +5,7 @@ use arrayref::{array_ref, array_refs};
 use fixed::types::I80F48;
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
+use solana_program::clock::UnixTimestamp;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::program_error::ProgramError;
 use solana_program::pubkey::Pubkey;
@@ -1060,6 +1061,21 @@ pub enum MangoInstruction {
 
     DontSquare {
         dont_square: bool,
+    },
+
+    /// Creates spot OTC order (`state::OtcOrder`).
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` OTC order PDA: `[]`.
+    /// 1. `[signer]` Order owner(initiator).
+    /// 2. `[]` Order counterparty.
+    /// 3. `[]` Clock sysvar.
+    /// 4. `[]` Rent sysvar.
+    /// 5. `[]` System program.
+    CreateSpotOtcOrder {
+        price: I80F48,
+        expires: UnixTimestamp,
     },
 }
 
