@@ -86,7 +86,7 @@ pub enum DataType {
     AdvancedOrders,
     ReferrerMemory,
     ReferrerIdRecord,
-    OtcOrder,
+    PerpOtcOrder,
 }
 
 const NUM_HEALTHS: usize = 3;
@@ -2395,7 +2395,7 @@ impl PerpOtcOrder {
         )?;
         check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
 
-        state.meta_data = MetaData::new(DataType::OtcOrder, 0, true);
+        state.meta_data = MetaData::new(DataType::PerpOtcOrder, 0, true);
         state.creator_side = creator_side;
         state.price = price;
         state.size = size;
