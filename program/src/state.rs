@@ -2334,7 +2334,6 @@ impl PerpMarket {
     }
 }
 
-/// TODO: Doc.
 #[derive(
     Eq, PartialEq, Copy, Clone, TryFromPrimitive, IntoPrimitive, Serialize, Deserialize, Debug,
 )]
@@ -2346,27 +2345,46 @@ pub enum OtcOrderStatus {
     Closed,
 }
 
-/// TODO: Doc.
 #[derive(Copy, Clone, Pod, Loadable)]
 #[repr(C)]
-pub struct OtcOrder {
+pub struct PerpOtcOrder {
     pub meta_data: MetaData,
+    pub creator_side: Side,
     pub price: I80F48,
-    pub size: I80F48,
-    pub counterparty: Pubkey,
+
+    /// Position size.
+    pub size: u64,
+
+    pub client_creation_time: UnixTimestamp,
     pub expires: UnixTimestamp,
+
+    /// Mango account of `PerpOtcOrder` owner.
+    pub creator: Pubkey,
+
+    /// Mango account of `PerpOtcOrder` counterparty.
+    pub counterparty: Pubkey,
+
+    pub perp_market: Pubkey,
+    pub perp_account_index: usize,
     pub status: OtcOrderStatus,
+    pub bump: u8,
 }
 
-impl OtcOrder {
+impl PerpOtcOrder {
     pub fn init(
         account: &AccountInfo,
         program_id: &Pubkey,
         rent: &Rent,
+        creator_side: Side,
         price: I80F48,
-        size: I80F48,
+        size: u64,
+        client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
+        creator: &Pubkey,
         counterparty: &Pubkey,
+        perp_market: &Pubkey,
+        perp_account_index: usize,
+        bump: u8,
     ) -> MangoResult<()> {
         let mut state: RefMut<Self> = Self::load_mut(account)?;
 
@@ -2378,10 +2396,16 @@ impl OtcOrder {
         check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
 
         state.meta_data = MetaData::new(DataType::OtcOrder, 0, true);
+        state.creator_side = creator_side;
         state.price = price;
         state.size = size;
-        state.counterparty = *counterparty;
+        state.client_creation_time = client_creation_time;
         state.expires = expires;
+        state.creator = *creator;
+        state.counterparty = *counterparty;
+        state.perp_market = *perp_market;
+        state.perp_account_index = perp_account_index;
+        state.bump = bump;
         state.status = OtcOrderStatus::Created;
 
         Ok(())

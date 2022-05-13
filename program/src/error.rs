@@ -125,6 +125,8 @@ pub enum MangoErrorCode {
     MaxAccountsReached,
     #[error("invalid serum vault")]
     InvalidSerumVault,
+    #[error("MangoErrorCode::InvalidTimeArgument Provided time is invalid")]
+    InvalidTimeArgument,
 
     #[error("MangoErrorCode::Default Check the source code for more info")] // 40
     Default = u32::MAX_VALUE,

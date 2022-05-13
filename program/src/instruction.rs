@@ -1063,21 +1063,25 @@ pub enum MangoInstruction {
         dont_square: bool,
     },
 
-    /// Creates spot OTC order (`state::OtcOrder`).
+    /// Creates perp OTC order (`state::PerpOtcOrder`).
     ///
     /// Accounts:
     ///
-    /// 0. `[writable]` OTC order PDA: `["spot_otc_order", price, size, expires, counterparty]`.
+    /// 0. `[writable]` Perp OTC order PDA: `["perp_otc_order", price, size, client_creation_time, expires, counterparty]`.
     /// 1. `[]` Mango group.
     /// 2. `[]` Mango account of owner.
-    /// 3. `[signer]` Order owner.
-    /// 4. `[]` Clock sysvar.
-    /// 5. `[]` Rent sysvar.
-    /// 6. `[]` System program.
-    CreateSpotOtcOrder {
+    /// 3. `[]` Mango account of counterparty.
+    /// 4. `[]` Perp market.
+    /// 5. `[signer]` Order owner.
+    /// 6. `[]` Clock sysvar.
+    /// 7. `[]` Rent sysvar.
+    /// 8. `[]` System program.
+    CreatePerpOtcOrder {
         price: I80F48,
-        size: I80F48,
+        size: u64,
+        client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
+        side: Side,
     },
 }
 

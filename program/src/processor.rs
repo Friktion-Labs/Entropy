@@ -48,8 +48,8 @@ use crate::state::PYTH_CONF_FILTER;
 use crate::state::{
     check_open_orders, load_asks_mut, load_bids_mut, load_market_state, load_open_orders,
     load_open_orders_accounts, AdvancedOrderType, AdvancedOrders, AssetType, DataType, HealthCache,
-    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, OtcOrder, PerpMarket,
-    PerpMarketCache, PerpMarketInfo, PerpTriggerOrder, PriceCache, ReferrerIdRecord,
+    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, PerpMarket,
+    PerpMarketCache, PerpMarketInfo, PerpOtcOrder, PerpTriggerOrder, PriceCache, ReferrerIdRecord,
     ReferrerMemory, RootBank, RootBankCache, SpotMarketInfo, TokenInfo, TriggerCondition,
     UserActiveAssets, ADVANCED_ORDER_FEE, FREE_ORDER_SLOT, INFO_LEN, MAX_ADVANCED_ORDERS,
     MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS, NEG_ONE_I80F48, ONE_I80F48,
@@ -60,7 +60,7 @@ use crate::utils::{
 };
 use crate::{
     error::{check_assert, MangoError, MangoErrorCode, MangoResult, SourceFileId},
-    utils::SPOT_OTC_ORDER_PREFIX,
+    utils::PERP_OTC_ORDER_PREFIX,
 };
 
 declare_check_assert_macros!(SourceFileId::Processor);
@@ -6279,28 +6279,44 @@ impl Processor {
     }
 
     #[inline(never)]
-    fn create_spot_otc_order(
+    fn create_perp_otc_order(
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         price: I80F48,
-        size: I80F48,
+        size: u64,
+        client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
+        side: Side,
     ) -> MangoResult {
-        const NUM_FIXED: usize = 7;
+        const NUM_FIXED: usize = 9;
 
-        let [otc_order_pda_ai, mango_group_ai, mango_account_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
+        let [otc_order_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_mango_account_ai, perp_market_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
-        let _ = MangoGroup::load_checked(mango_group_ai, program_id)?;
+        // Unpack accounts state
+        let mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
 
-        let mango_account_state =
-            MangoAccount::load_checked(mango_account_ai, program_id, mango_group_ai.key)?;
+        let creator_mango_account_state =
+            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+
+        let counterparty_mango_account_state = MangoAccount::load_checked(
+            counterparty_mango_account_ai,
+            program_id,
+            mango_group_ai.key,
+        )?;
+
+        let perp_market_state =
+            PerpMarket::load_checked(perp_market_ai, program_id, mango_group_ai.key)?;
 
         // Check accounts
         check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check!(
+            creator_mango_account_ai.key != counterparty_mango_account_ai.key,
+            MangoErrorCode::InvalidAccount
+        )?;
         check_eq!(
             otc_order_owner_ai.key,
-            mango_account_state.owner,
+            &creator_mango_account_state.owner,
             MangoErrorCode::InvalidAccount
         )?;
         check_eq!(
@@ -6319,42 +6335,64 @@ impl Processor {
             MangoErrorCode::InvalidProgramId
         )?;
 
-        let otc_pda_seeds: &[&[u8]] = &[
-            SPOT_OTC_ORDER_PREFIX.as_bytes(),
-            &price.to_le_bytes(),
-            &size.to_le_bytes(),
-            &expires.to_le_bytes(),
-            mango_account_ai.key.as_ref(),
-        ];
-        let (otc_order_pda, bump_seed) = Pubkey::find_program_address(otc_pda_seeds, program_id);
+        let (otc_order_pda, bump_seed) = Pubkey::find_program_address(
+            &[
+                PERP_OTC_ORDER_PREFIX.as_bytes(),
+                &price.to_le_bytes(),
+                &size.to_le_bytes(),
+                &client_creation_time.to_le_bytes(),
+                &expires.to_le_bytes(),
+                counterparty_mango_account_ai.key.as_ref(),
+            ],
+            program_id,
+        );
         check!(&otc_order_pda == otc_order_pda_ai.key, MangoErrorCode::InvalidAccount)?;
 
         let clock = Clock::get()?;
         let rent = Rent::get()?;
 
-        check!(clock.unix_timestamp < expires, ProgramError::InvalidArgument)?;
+        check!(clock.unix_timestamp < expires, MangoErrorCode::InvalidTimeArgument)?;
+        check!(client_creation_time <= clock.unix_timestamp, MangoErrorCode::InvalidTimeArgument)?;
 
-        // Create `state::OtcOrder` account on-chain
+        let perp_account_index = mango_group_state
+            .find_perp_market_index(perp_market_ai.key)
+            .ok_or(throw_err!(MangoErrorCode::InvalidMarket))?;
+
+        // Create `state::PerpOtcOrder` account on-chain
         create_pda_account(
             otc_order_owner_ai,
             &rent,
-            size_of::<OtcOrder>(),
+            size_of::<PerpOtcOrder>(),
             program_id,
             system_program_ai,
             otc_order_pda_ai,
-            &[otc_pda_seeds, bump_seed],
+            &[
+                PERP_OTC_ORDER_PREFIX.as_bytes(),
+                &price.to_le_bytes(),
+                &size.to_le_bytes(),
+                &client_creation_time.to_le_bytes(),
+                &expires.to_le_bytes(),
+                counterparty_mango_account_ai.key.as_ref(),
+                &[bump_seed],
+            ],
             &[],
         )?;
 
-        // Initialize `state::OtcOrder`
-        OtcOrder::init(
+        // Initialize `state::PerpOtcOrder`
+        PerpOtcOrder::init(
             otc_order_pda_ai,
             program_id,
             &rent,
+            side,
             price,
             size,
+            client_creation_time,
             expires,
-            &mango_account_ai.key,
+            creator_mango_account_ai.key,
+            counterparty_mango_account_ai.key,
+            perp_market_ai.key,
+            perp_account_index,
+            bump_seed,
         )?;
 
         Ok(())
@@ -6884,9 +6922,23 @@ impl Processor {
                 msg!("Mango: DontSquare");
                 Self::change_dont_square(program_id, accounts, dont_square)
             }
-            MangoInstruction::CreateSpotOtcOrder { price, size, expires } => {
-                msg!("Mango: CreateSpotOtcOrder");
-                Self::create_spot_otc_order(program_id, accounts, price, size, expires)
+            MangoInstruction::CreatePerpOtcOrder {
+                price,
+                size,
+                client_creation_time,
+                expires,
+                side,
+            } => {
+                msg!("Mango: CreatePerpOtcOrder");
+                Self::create_perp_otc_order(
+                    program_id,
+                    accounts,
+                    price,
+                    size,
+                    client_creation_time,
+                    expires,
+                    side,
+                )
             }
         }
     }
