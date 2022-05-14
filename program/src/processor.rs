@@ -38,6 +38,7 @@ use mango_logs::{
     UpdateFundingLog, UpdateRootBankLog, WithdrawLog,
 };
 
+use crate::error::{check_assert, MangoError, MangoErrorCode, MangoResult, SourceFileId};
 use crate::ids::{msrm_token, srm_token};
 use crate::instruction::MangoInstruction;
 use crate::matching::{Book, BookSide, OrderType, Side};
@@ -48,19 +49,16 @@ use crate::state::PYTH_CONF_FILTER;
 use crate::state::{
     check_open_orders, load_asks_mut, load_bids_mut, load_market_state, load_open_orders,
     load_open_orders_accounts, AdvancedOrderType, AdvancedOrders, AssetType, DataType, HealthCache,
-    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, PerpMarket,
-    PerpMarketCache, PerpMarketInfo, PerpOtcOrder, PerpTriggerOrder, PriceCache, ReferrerIdRecord,
-    ReferrerMemory, RootBank, RootBankCache, SpotMarketInfo, TokenInfo, TriggerCondition,
-    UserActiveAssets, ADVANCED_ORDER_FEE, FREE_ORDER_SLOT, INFO_LEN, MAX_ADVANCED_ORDERS,
-    MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS, NEG_ONE_I80F48, ONE_I80F48,
-    QUOTE_INDEX, ZERO_I80F48,
+    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, OtcOrderStatus,
+    OtcOrders, PerpMarket, PerpMarketCache, PerpMarketInfo, PerpOtcOrder, PerpTriggerOrder,
+    PriceCache, ReferrerIdRecord, ReferrerMemory, RootBank, RootBankCache, SpotMarketInfo,
+    TokenInfo, TriggerCondition, UserActiveAssets, ADVANCED_ORDER_FEE, FREE_ORDER_SLOT, INFO_LEN,
+    MAX_ADVANCED_ORDERS, MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS,
+    NEG_ONE_I80F48, ONE_I80F48, QUOTE_INDEX, ZERO_I80F48,
 };
 use crate::utils::{
     emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48, serum_fees_mod,
-};
-use crate::{
-    error::{check_assert, MangoError, MangoErrorCode, MangoResult, SourceFileId},
-    utils::PERP_OTC_ORDER_PREFIX,
+    OTC_ORDERS_PREFIX,
 };
 
 declare_check_assert_macros!(SourceFileId::Processor);
@@ -6279,6 +6277,67 @@ impl Processor {
     }
 
     #[inline(never)]
+    fn init_otc_orders(program_id: &Pubkey, accounts: &[AccountInfo]) -> MangoResult {
+        const NUM_FIXED: usize = 6;
+
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, otc_order_owner_ai, rent_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        // Unpack accounts state
+        let mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let creator_mango_account_state =
+            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+
+        // Check accounts
+        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(
+            otc_order_owner_ai.key,
+            &creator_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            rent_ai.key,
+            &solana_program::sysvar::rent::id(),
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+
+        let (otc_orders_pda, bump_seed) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
+            program_id,
+        );
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
+
+        let rent = Rent::get()?;
+
+        create_pda_account(
+            otc_order_owner_ai,
+            &rent,
+            size_of::<OtcOrders>(),
+            program_id,
+            system_program_ai,
+            otc_orders_pda_ai,
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref(), &[bump_seed]],
+            &[],
+        )?;
+
+        let _ = OtcOrders::load_and_init(
+            otc_order_owner_ai,
+            program_id,
+            &rent,
+            creator_mango_account_ai.key,
+            bump_seed,
+        )?;
+
+        Ok(())
+    }
+
+    #[inline(never)]
     fn create_perp_otc_order(
         program_id: &Pubkey,
         accounts: &[AccountInfo],
@@ -6290,7 +6349,7 @@ impl Processor {
     ) -> MangoResult {
         const NUM_FIXED: usize = 9;
 
-        let [otc_order_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_wallet_ai, perp_market_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_wallet_ai, perp_market_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
         // Unpack accounts state
@@ -6302,6 +6361,8 @@ impl Processor {
         let perp_market_state =
             PerpMarket::load_checked(perp_market_ai, program_id, mango_group_ai.key)?;
 
+        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
+
         // Check accounts
         check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
         check!(
@@ -6311,6 +6372,11 @@ impl Processor {
         check_eq!(
             otc_order_owner_ai.key,
             &creator_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            creator_mango_account_ai.key,
+            &otc_orders.creator_account,
             MangoErrorCode::InvalidAccount
         )?;
         check_eq!(
@@ -6329,20 +6395,11 @@ impl Processor {
             MangoErrorCode::InvalidProgramId
         )?;
 
-        let (otc_order_pda, bump_seed) = Pubkey::find_program_address(
-            &[
-                PERP_OTC_ORDER_PREFIX.as_bytes(),
-                &price.to_le_bytes(),
-                &size.to_le_bytes(),
-                &client_creation_time.to_le_bytes(),
-                &expires.to_le_bytes(),
-                creator_mango_account_ai.key.as_ref(),
-                counterparty_wallet_ai.key.as_ref(),
-                perp_market_ai.key.as_ref(),
-            ],
+        let (otc_orders_pda, bump_seed) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
             program_id,
         );
-        check!(&otc_order_pda == otc_order_pda_ai.key, MangoErrorCode::InvalidAccount)?;
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
 
         let clock = Clock::get()?;
         let rent = Rent::get()?;
@@ -6354,44 +6411,20 @@ impl Processor {
             .find_perp_market_index(perp_market_ai.key)
             .ok_or(throw_err!(MangoErrorCode::InvalidMarket))?;
 
-        // Create `state::PerpOtcOrder` account on-chain
-        create_pda_account(
-            otc_order_owner_ai,
-            &rent,
-            size_of::<PerpOtcOrder>(),
-            program_id,
-            system_program_ai,
-            otc_order_pda_ai,
-            &[
-                PERP_OTC_ORDER_PREFIX.as_bytes(),
-                &price.to_le_bytes(),
-                &size.to_le_bytes(),
-                &client_creation_time.to_le_bytes(),
-                &expires.to_le_bytes(),
-                creator_mango_account_ai.key.as_ref(),
-                counterparty_wallet_ai.key.as_ref(),
-                perp_market_ai.key.as_ref(),
-                &[bump_seed],
-            ],
-            &[],
-        )?;
-
-        // Initialize `state::PerpOtcOrder`
-        let _ = PerpOtcOrder::load_and_init(
-            otc_order_pda_ai,
-            program_id,
-            &rent,
-            side,
+        // Add perp OTC order
+        let perp_otc_order = PerpOtcOrder {
+            creator_side: side,
             price,
             size,
             client_creation_time,
             expires,
-            creator_mango_account_ai.key,
-            counterparty_wallet_ai.key,
-            perp_market_ai.key,
+            counterparty_wallet: *counterparty_wallet_ai.key,
+            perp_market: *perp_market_ai.key,
             perp_account_index,
-            bump_seed,
-        )?;
+            status: OtcOrderStatus::Created,
+        };
+
+        otc_orders.add_perp_order(perp_otc_order)?;
 
         Ok(())
     }
@@ -6919,6 +6952,10 @@ impl Processor {
             MangoInstruction::DontSquare { dont_square } => {
                 msg!("Mango: DontSquare");
                 Self::change_dont_square(program_id, accounts, dont_square)
+            }
+            MangoInstruction::InitOtcOrders => {
+                msg!("Mango: InitOtcOrders");
+                Self::init_otc_orders(program_id, accounts)
             }
             MangoInstruction::CreatePerpOtcOrder {
                 price,

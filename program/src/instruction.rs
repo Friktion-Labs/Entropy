@@ -1063,16 +1063,28 @@ pub enum MangoInstruction {
         dont_square: bool,
     },
 
+    /// Initialize OTC orders account for user (`state::OtcOrders`).
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Uninitialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` Rent sysvar.
+    /// 5. `[]` System program.
+    InitOtcOrders,
+
     /// Creates perp OTC order (`state::PerpOtcOrder`).
     ///
     /// Accounts:
     ///
-    /// 0. `[writable]` Perp OTC order PDA: `["perp_otc_order", price, size, client_creation_time, expires, creator, counterparty_wallet, perp_market]`.
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
     /// 1. `[]` Mango group.
     /// 2. `[]` Mango account of owner.
     /// 3. `[]` Counterparty wallet.
     /// 4. `[]` Perp market.
-    /// 5. `[signer]` Order owner.
+    /// 5. `[signer]` Order owner wallet.
     /// 6. `[]` Clock sysvar.
     /// 7. `[]` Rent sysvar.
     /// 8. `[]` System program.

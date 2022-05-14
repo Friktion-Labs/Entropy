@@ -1,8 +1,10 @@
 use std::cell::{Ref, RefMut};
 use std::cmp::{max, min};
 use std::convert::{identity, TryFrom};
+use std::mem;
 use std::mem::size_of;
 use std::ops::Deref;
+use std::ptr;
 
 use bytemuck::{cast_ref, from_bytes, from_bytes_mut, try_from_bytes_mut};
 use enumflags2::BitFlags;
@@ -29,6 +31,7 @@ use crate::matching::{Book, LeafNode, OrderType, Side};
 use crate::queue::{EventQueue, EventType, FillEvent};
 use crate::utils::{
     compute_interest_rate, invert_side, pow_i80f48, remove_slop_mut, split_open_orders,
+    MAX_PERP_OTC_ORDERS, MAX_SPOT_OTC_ORDERS,
 };
 
 pub const MAX_TOKENS: usize = 16; // Just changed
@@ -86,7 +89,7 @@ pub enum DataType {
     AdvancedOrders,
     ReferrerMemory,
     ReferrerIdRecord,
-    PerpOtcOrder,
+    OtcOrders,
 }
 
 const NUM_HEALTHS: usize = 3;
@@ -2340,15 +2343,13 @@ impl PerpMarket {
 #[serde(into = "u8", try_from = "u8")]
 #[repr(u8)]
 pub enum OtcOrderStatus {
-    Created = 0,
-    Filled,
-    Closed,
+    Uninitialized = 0,
+    Created,
 }
 
-#[derive(Copy, Clone, Pod, Loadable)]
+#[derive(Copy, Clone, Pod)]
 #[repr(C)]
 pub struct PerpOtcOrder {
-    pub meta_data: MetaData,
     pub creator_side: Side,
     pub price: I80F48,
 
@@ -2358,31 +2359,40 @@ pub struct PerpOtcOrder {
     pub client_creation_time: UnixTimestamp,
     pub expires: UnixTimestamp,
 
-    /// Mango account of `PerpOtcOrder` owner.
-    pub creator_account: Pubkey,
-
     pub counterparty_wallet: Pubkey,
 
     pub perp_market: Pubkey,
     pub perp_account_index: usize,
     pub status: OtcOrderStatus,
+}
+
+/// TODO: Implement schema.
+#[derive(Copy, Clone, Pod)]
+#[repr(C)]
+pub struct SpotOtcOrder {
+    pub status: OtcOrderStatus,
+}
+
+#[derive(Copy, Clone, Pod, Loadable)]
+pub struct OtcOrders {
+    pub meta_data: MetaData,
+    pub perp_orders: [PerpOtcOrder; MAX_PERP_OTC_ORDERS],
+    pub spot_orders: [SpotOtcOrder; MAX_SPOT_OTC_ORDERS],
+
+    /// Mango account of owner(wallet).
+    pub creator_account: Pubkey,
+
+    pub perp_orders_len: usize,
+    pub spot_orders_len: usize,
     pub bump: u8,
 }
 
-impl PerpOtcOrder {
+impl OtcOrders {
     pub fn load_and_init<'a>(
         account: &'a AccountInfo,
         program_id: &Pubkey,
         rent: &Rent,
-        creator_side: Side,
-        price: I80F48,
-        size: u64,
-        client_creation_time: UnixTimestamp,
-        expires: UnixTimestamp,
         creator_account: &Pubkey,
-        counterparty_wallet: &Pubkey,
-        perp_market: &Pubkey,
-        perp_account_index: usize,
         bump: u8,
     ) -> MangoResult<RefMut<'a, Self>> {
         let mut state: RefMut<Self> = Self::load_mut(account)?;
@@ -2394,18 +2404,11 @@ impl PerpOtcOrder {
         )?;
         check!(!state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
 
-        state.meta_data = MetaData::new(DataType::PerpOtcOrder, 0, true);
-        state.creator_side = creator_side;
-        state.price = price;
-        state.size = size;
-        state.client_creation_time = client_creation_time;
-        state.expires = expires;
+        state.meta_data = MetaData::new(DataType::OtcOrders, 0, true);
         state.creator_account = *creator_account;
-        state.counterparty_wallet = *counterparty_wallet;
-        state.perp_market = *perp_market;
-        state.perp_account_index = perp_account_index;
+        state.perp_orders_len = 0;
+        state.spot_orders_len = 0;
         state.bump = bump;
-        state.status = OtcOrderStatus::Created;
 
         Ok(state)
     }
@@ -2417,7 +2420,7 @@ impl PerpOtcOrder {
         check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
         let state = Self::load(account)?;
         check!(state.meta_data.is_initialized, MangoErrorCode::Default)?;
-        check!(state.meta_data.data_type == DataType::PerpOtcOrder as u8, MangoErrorCode::Default)?;
+        check!(state.meta_data.data_type == DataType::OtcOrders as u8, MangoErrorCode::Default)?;
         Ok(state)
     }
 
@@ -2429,10 +2432,100 @@ impl PerpOtcOrder {
         let state = Self::load_mut(account)?;
         check!(state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
         check!(
-            state.meta_data.data_type == DataType::PerpOtcOrder as u8,
+            state.meta_data.data_type == DataType::OtcOrders as u8,
             MangoErrorCode::InvalidAccountState
         )?;
         Ok(state)
+    }
+
+    pub fn delete_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+        self.perp_orders_len =
+            self.perp_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        // If 'index' points to the last element in array, then fill the last one with zeros
+        // If 'index' points to other element in array, then shift
+        // all right values to the left and fill with zeros last element,
+        // because we already copied to the left
+        unsafe {
+            // Ignored, when we delete last element
+            ptr::copy(
+                self.perp_orders.as_ptr().add(index + 1),
+                self.perp_orders.as_mut_ptr().add(index),
+                self.perp_orders_len - index,
+            );
+
+            // Fill last element with zeros, because we already copy-shift the whole array
+            self.perp_orders[self.perp_orders_len] = mem::zeroed();
+        }
+
+        Ok(())
+    }
+
+    pub fn delete_spot_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+        self.spot_orders_len =
+            self.spot_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        // If 'index' points to the last element in array, then fill the last one with zeros
+        // If 'index' points to other element in array, then shift
+        // all right values to the left and fill with zeros last element,
+        // because we already copied to the left
+        unsafe {
+            // Ignored, when we delete last element
+            ptr::copy(
+                self.spot_orders.as_ptr().add(index + 1),
+                self.spot_orders.as_mut_ptr().add(index),
+                self.spot_orders_len - index,
+            );
+
+            // Fill last element with zeros, because we already copy-shift the whole array
+            self.spot_orders[self.spot_orders_len] = mem::zeroed();
+        }
+
+        Ok(())
+    }
+
+    pub fn delete_all_perp_orders(&mut self) -> MangoResult<()> {
+        unsafe {
+            self.perp_orders = mem::zeroed();
+        }
+
+        self.perp_orders_len = 0;
+
+        Ok(())
+    }
+
+    pub fn delete_all_spot_orders(&mut self) -> MangoResult<()> {
+        unsafe {
+            self.spot_orders = mem::zeroed();
+        }
+
+        self.spot_orders_len = 0;
+
+        Ok(())
+    }
+
+    pub fn add_perp_order(&mut self, perp_otc_order: PerpOtcOrder) -> MangoResult<()> {
+        if self.perp_orders_len == MAX_PERP_OTC_ORDERS {
+            return Err(throw_err!(MangoErrorCode::MaxOtcOrdersReached));
+        }
+
+        self.perp_orders[self.perp_orders_len] = perp_otc_order;
+
+        self.perp_orders_len =
+            self.perp_orders_len.checked_add(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
+        Ok(())
+    }
+
+    pub fn add_spot_order(&mut self, spot_otc_order: SpotOtcOrder) -> MangoResult<()> {
+        if self.spot_orders_len == MAX_SPOT_OTC_ORDERS {
+            return Err(throw_err!(MangoErrorCode::MaxOtcOrdersReached));
+        }
+
+        self.spot_orders[self.spot_orders_len] = spot_otc_order;
+
+        self.spot_orders_len =
+            self.spot_orders_len.checked_add(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
+        Ok(())
     }
 }
 
