@@ -1067,10 +1067,10 @@ pub enum MangoInstruction {
     ///
     /// Accounts:
     ///
-    /// 0. `[writable]` Perp OTC order PDA: `["perp_otc_order", price, size, client_creation_time, expires, counterparty]`.
+    /// 0. `[writable]` Perp OTC order PDA: `["perp_otc_order", price, size, client_creation_time, expires, creator, counterparty_wallet, perp_market]`.
     /// 1. `[]` Mango group.
     /// 2. `[]` Mango account of owner.
-    /// 3. `[]` Mango account of counterparty.
+    /// 3. `[]` Counterparty wallet.
     /// 4. `[]` Perp market.
     /// 5. `[signer]` Order owner.
     /// 6. `[]` Clock sysvar.

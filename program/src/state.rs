@@ -2361,8 +2361,7 @@ pub struct PerpOtcOrder {
     /// Mango account of `PerpOtcOrder` owner.
     pub creator: Pubkey,
 
-    /// Mango account of `PerpOtcOrder` counterparty.
-    pub counterparty: Pubkey,
+    pub counterparty_wallet: Pubkey,
 
     pub perp_market: Pubkey,
     pub perp_account_index: usize,
@@ -2371,8 +2370,8 @@ pub struct PerpOtcOrder {
 }
 
 impl PerpOtcOrder {
-    pub fn init(
-        account: &AccountInfo,
+    pub fn load_and_init<'a>(
+        account: &'a AccountInfo,
         program_id: &Pubkey,
         rent: &Rent,
         creator_side: Side,
@@ -2381,11 +2380,11 @@ impl PerpOtcOrder {
         client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
         creator: &Pubkey,
-        counterparty: &Pubkey,
+        counterparty_wallet: &Pubkey,
         perp_market: &Pubkey,
         perp_account_index: usize,
         bump: u8,
-    ) -> MangoResult<()> {
+    ) -> MangoResult<RefMut<'a, Self>> {
         let mut state: RefMut<Self> = Self::load_mut(account)?;
 
         check!(account.owner == program_id, MangoErrorCode::InvalidOwner)?;
@@ -2402,13 +2401,38 @@ impl PerpOtcOrder {
         state.client_creation_time = client_creation_time;
         state.expires = expires;
         state.creator = *creator;
-        state.counterparty = *counterparty;
+        state.counterparty_wallet = *counterparty_wallet;
         state.perp_market = *perp_market;
         state.perp_account_index = perp_account_index;
         state.bump = bump;
         state.status = OtcOrderStatus::Created;
 
-        Ok(())
+        Ok(state)
+    }
+
+    pub fn load_checked<'a>(
+        account: &'a AccountInfo,
+        program_id: &Pubkey,
+    ) -> MangoResult<Ref<'a, Self>> {
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
+        let state = Self::load(account)?;
+        check!(state.meta_data.is_initialized, MangoErrorCode::Default)?;
+        check!(state.meta_data.data_type == DataType::PerpOtcOrder as u8, MangoErrorCode::Default)?;
+        Ok(state)
+    }
+
+    pub fn load_mut_checked<'a>(
+        account: &'a AccountInfo,
+        program_id: &Pubkey,
+    ) -> MangoResult<RefMut<'a, Self>> {
+        check_eq!(account.owner, program_id, MangoErrorCode::InvalidOwner)?;
+        let state = Self::load_mut(account)?;
+        check!(state.meta_data.is_initialized, MangoErrorCode::InvalidAccountState)?;
+        check!(
+            state.meta_data.data_type == DataType::PerpOtcOrder as u8,
+            MangoErrorCode::InvalidAccountState
+        )?;
+        Ok(state)
     }
 }
 

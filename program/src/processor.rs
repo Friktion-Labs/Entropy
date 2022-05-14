@@ -6290,7 +6290,7 @@ impl Processor {
     ) -> MangoResult {
         const NUM_FIXED: usize = 9;
 
-        let [otc_order_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_mango_account_ai, perp_market_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
+        let [otc_order_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_wallet_ai, perp_market_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
         // Unpack accounts state
@@ -6299,19 +6299,13 @@ impl Processor {
         let creator_mango_account_state =
             MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
 
-        let counterparty_mango_account_state = MangoAccount::load_checked(
-            counterparty_mango_account_ai,
-            program_id,
-            mango_group_ai.key,
-        )?;
-
         let perp_market_state =
             PerpMarket::load_checked(perp_market_ai, program_id, mango_group_ai.key)?;
 
         // Check accounts
         check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
         check!(
-            creator_mango_account_ai.key != counterparty_mango_account_ai.key,
+            otc_order_owner_ai.key != counterparty_wallet_ai.key,
             MangoErrorCode::InvalidAccount
         )?;
         check_eq!(
@@ -6342,7 +6336,9 @@ impl Processor {
                 &size.to_le_bytes(),
                 &client_creation_time.to_le_bytes(),
                 &expires.to_le_bytes(),
-                counterparty_mango_account_ai.key.as_ref(),
+                creator_mango_account_ai.key.as_ref(),
+                counterparty_wallet_ai.key.as_ref(),
+                perp_market_ai.key.as_ref(),
             ],
             program_id,
         );
@@ -6372,14 +6368,16 @@ impl Processor {
                 &size.to_le_bytes(),
                 &client_creation_time.to_le_bytes(),
                 &expires.to_le_bytes(),
-                counterparty_mango_account_ai.key.as_ref(),
+                creator_mango_account_ai.key.as_ref(),
+                counterparty_wallet_ai.key.as_ref(),
+                perp_market_ai.key.as_ref(),
                 &[bump_seed],
             ],
             &[],
         )?;
 
         // Initialize `state::PerpOtcOrder`
-        PerpOtcOrder::init(
+        let _ = PerpOtcOrder::load_and_init(
             otc_order_pda_ai,
             program_id,
             &rent,
@@ -6389,7 +6387,7 @@ impl Processor {
             client_creation_time,
             expires,
             creator_mango_account_ai.key,
-            counterparty_mango_account_ai.key,
+            counterparty_wallet_ai.key,
             perp_market_ai.key,
             perp_account_index,
             bump_seed,
