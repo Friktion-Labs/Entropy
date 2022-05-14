@@ -2359,7 +2359,7 @@ pub struct PerpOtcOrder {
     pub expires: UnixTimestamp,
 
     /// Mango account of `PerpOtcOrder` owner.
-    pub creator: Pubkey,
+    pub creator_account: Pubkey,
 
     pub counterparty_wallet: Pubkey,
 
@@ -2379,7 +2379,7 @@ impl PerpOtcOrder {
         size: u64,
         client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
-        creator: &Pubkey,
+        creator_account: &Pubkey,
         counterparty_wallet: &Pubkey,
         perp_market: &Pubkey,
         perp_account_index: usize,
@@ -2400,7 +2400,7 @@ impl PerpOtcOrder {
         state.size = size;
         state.client_creation_time = client_creation_time;
         state.expires = expires;
-        state.creator = *creator;
+        state.creator_account = *creator_account;
         state.counterparty_wallet = *counterparty_wallet;
         state.perp_market = *perp_market;
         state.perp_account_index = perp_account_index;
