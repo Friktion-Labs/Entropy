@@ -131,6 +131,10 @@ pub enum MangoErrorCode {
         "MangoErrorCode::MaxOtcOrdersReached The maximum number of OTC orders has been reached"
     )]
     MaxOtcOrdersReached,
+    #[error("MangoErrorCode::InvalidOtcOrderStatus OTC order in wrong status")]
+    InvalidOtcOrderStatus,
+    #[error("MangoErrorCode::InvalidOtcOrderIndex OTC order with provided index is invalid")]
+    InvalidOtcOrderIndex,
 
     #[error("MangoErrorCode::Default Check the source code for more info")] // 40
     Default = u32::MAX_VALUE,

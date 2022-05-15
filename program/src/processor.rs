@@ -6343,13 +6343,12 @@ impl Processor {
         accounts: &[AccountInfo],
         price: I80F48,
         size: u64,
-        client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
         side: Side,
     ) -> MangoResult {
-        const NUM_FIXED: usize = 9;
+        const NUM_FIXED: usize = 8;
 
-        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_wallet_ai, perp_market_ai, otc_order_owner_ai, clock_ai, rent_ai, system_program_ai] =
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_wallet_ai, perp_market_ai, otc_order_owner_ai, clock_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
         // Unpack accounts state
@@ -6358,7 +6357,7 @@ impl Processor {
         let creator_mango_account_state =
             MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
 
-        let perp_market_state =
+        let _perp_market_state =
             PerpMarket::load_checked(perp_market_ai, program_id, mango_group_ai.key)?;
 
         let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
@@ -6385,27 +6384,20 @@ impl Processor {
             MangoErrorCode::InvalidAccount
         )?;
         check_eq!(
-            rent_ai.key,
-            &solana_program::sysvar::rent::id(),
-            MangoErrorCode::InvalidAccount
-        )?;
-        check_eq!(
             system_program_ai.key,
             &solana_program::system_program::id(),
             MangoErrorCode::InvalidProgramId
         )?;
 
-        let (otc_orders_pda, bump_seed) = Pubkey::find_program_address(
+        let (otc_orders_pda, _) = Pubkey::find_program_address(
             &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
             program_id,
         );
         check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
 
         let clock = Clock::get()?;
-        let rent = Rent::get()?;
 
         check!(clock.unix_timestamp < expires, MangoErrorCode::InvalidTimeArgument)?;
-        check!(client_creation_time <= clock.unix_timestamp, MangoErrorCode::InvalidTimeArgument)?;
 
         let perp_account_index = mango_group_state
             .find_perp_market_index(perp_market_ai.key)
@@ -6416,7 +6408,7 @@ impl Processor {
             creator_side: side,
             price,
             size,
-            client_creation_time,
+            client_creation_time: clock.unix_timestamp,
             expires,
             counterparty_wallet: *counterparty_wallet_ai.key,
             perp_market: *perp_market_ai.key,
@@ -6957,23 +6949,9 @@ impl Processor {
                 msg!("Mango: InitOtcOrders");
                 Self::init_otc_orders(program_id, accounts)
             }
-            MangoInstruction::CreatePerpOtcOrder {
-                price,
-                size,
-                client_creation_time,
-                expires,
-                side,
-            } => {
+            MangoInstruction::CreatePerpOtcOrder { price, size, expires, side } => {
                 msg!("Mango: CreatePerpOtcOrder");
-                Self::create_perp_otc_order(
-                    program_id,
-                    accounts,
-                    price,
-                    size,
-                    client_creation_time,
-                    expires,
-                    side,
-                )
+                Self::create_perp_otc_order(program_id, accounts, price, size, expires, side)
             }
         }
     }

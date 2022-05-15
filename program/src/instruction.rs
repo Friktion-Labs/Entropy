@@ -1086,12 +1086,10 @@ pub enum MangoInstruction {
     /// 4. `[]` Perp market.
     /// 5. `[signer]` Order owner wallet.
     /// 6. `[]` Clock sysvar.
-    /// 7. `[]` Rent sysvar.
-    /// 8. `[]` System program.
+    /// 7. `[]` System program.
     CreatePerpOtcOrder {
         price: I80F48,
         size: u64,
-        client_creation_time: UnixTimestamp,
         expires: UnixTimestamp,
         side: Side,
     },

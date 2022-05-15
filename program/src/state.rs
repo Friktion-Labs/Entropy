@@ -2345,6 +2345,8 @@ impl PerpMarket {
 pub enum OtcOrderStatus {
     Uninitialized = 0,
     Created,
+    Canceled,
+    Filled,
 }
 
 #[derive(Copy, Clone, Pod)]
@@ -2439,8 +2441,16 @@ impl OtcOrders {
     }
 
     pub fn delete_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+        if index >= self.perp_orders_len {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
+        }
+
         self.perp_orders_len =
             self.perp_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        if self.perp_orders[index].status != OtcOrderStatus::Created {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
+        }
 
         // If 'index' points to the last element in array, then fill the last one with zeros
         // If 'index' points to other element in array, then shift
@@ -2462,8 +2472,16 @@ impl OtcOrders {
     }
 
     pub fn delete_spot_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+        if index >= self.spot_orders_len {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
+        }
+
         self.spot_orders_len =
             self.spot_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        if self.spot_orders[index].status != OtcOrderStatus::Created {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
+        }
 
         // If 'index' points to the last element in array, then fill the last one with zeros
         // If 'index' points to other element in array, then shift
@@ -2485,6 +2503,11 @@ impl OtcOrders {
     }
 
     pub fn delete_all_perp_orders(&mut self) -> MangoResult<()> {
+        // Ensure, that all orders are shouldn't in "Created" status
+        if self.perp_orders.iter().find(|x| x.status != OtcOrderStatus::Created).is_some() {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
+        }
+
         unsafe {
             self.perp_orders = mem::zeroed();
         }
@@ -2495,6 +2518,11 @@ impl OtcOrders {
     }
 
     pub fn delete_all_spot_orders(&mut self) -> MangoResult<()> {
+        // Ensure, that all orders are shouldn't in "Created" status
+        if self.spot_orders.iter().find(|x| x.status != OtcOrderStatus::Created).is_some() {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
+        }
+
         unsafe {
             self.spot_orders = mem::zeroed();
         }
