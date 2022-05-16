@@ -2517,6 +2517,7 @@ impl OtcOrders {
         Ok(())
     }
 
+
     pub fn delete_all_spot_orders(&mut self) -> MangoResult<()> {
         // Ensure, that all orders are shouldn't in "Created" status
         if self.spot_orders.iter().find(|x| x.status == OtcOrderStatus::Created).is_some() {
