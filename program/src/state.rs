@@ -2448,7 +2448,7 @@ impl OtcOrders {
         self.perp_orders_len =
             self.perp_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
 
-        if self.perp_orders[index].status != OtcOrderStatus::Created {
+        if self.perp_orders[index].status == OtcOrderStatus::Created {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2479,7 +2479,7 @@ impl OtcOrders {
         self.spot_orders_len =
             self.spot_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
 
-        if self.spot_orders[index].status != OtcOrderStatus::Created {
+        if self.spot_orders[index].status == OtcOrderStatus::Created {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2504,7 +2504,7 @@ impl OtcOrders {
 
     pub fn delete_all_perp_orders(&mut self) -> MangoResult<()> {
         // Ensure, that all orders are shouldn't in "Created" status
-        if self.perp_orders.iter().find(|x| x.status != OtcOrderStatus::Created).is_some() {
+        if self.perp_orders.iter().find(|x| x.status == OtcOrderStatus::Created).is_some() {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2517,9 +2517,10 @@ impl OtcOrders {
         Ok(())
     }
 
+
     pub fn delete_all_spot_orders(&mut self) -> MangoResult<()> {
         // Ensure, that all orders are shouldn't in "Created" status
-        if self.spot_orders.iter().find(|x| x.status != OtcOrderStatus::Created).is_some() {
+        if self.spot_orders.iter().find(|x| x.status == OtcOrderStatus::Created).is_some() {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
