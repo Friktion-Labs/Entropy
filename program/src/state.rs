@@ -2532,7 +2532,7 @@ impl OtcOrders {
         Ok(())
     }
 
-    pub fn close_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+    pub fn cancel_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
         if index >= self.perp_orders_len {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
         }
@@ -2548,7 +2548,7 @@ impl OtcOrders {
         Ok(())
     }
 
-    pub fn close_spot_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+    pub fn cancel_spot_order_by_index(&mut self, index: usize) -> MangoResult<()> {
         if index >= self.spot_orders_len {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
         }

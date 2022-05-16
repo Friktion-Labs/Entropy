@@ -1094,7 +1094,7 @@ pub enum MangoInstruction {
         side: Side,
     },
 
-    /// Closes perp OTC order.
+    /// Cancel perp OTC order.
     ///
     /// Accounts:
     ///
@@ -1103,11 +1103,11 @@ pub enum MangoInstruction {
     /// 2. `[]` Mango account of owner.
     /// 3. `[signer]` Order owner wallet.
     /// 4. `[]` System program.
-    ClosePerpOtcOrder {
+    CancelPerpOtcOrder {
         order_id: usize,
     },
 
-    /// Closes spot OTC order.
+    /// Cancel spot OTC order.
     ///
     /// Accounts:
     ///
@@ -1116,7 +1116,7 @@ pub enum MangoInstruction {
     /// 2. `[]` Mango account of owner.
     /// 3. `[signer]` Order owner wallet.
     /// 4. `[]` System program.
-    CloseSpotOtcOrder {
+    CancelSpotOtcOrder {
         order_id: usize,
     },
 }

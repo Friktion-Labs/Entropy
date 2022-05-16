@@ -6422,7 +6422,7 @@ impl Processor {
     }
 
     #[inline(never)]
-    fn close_perp_otc_order(
+    fn cancel_perp_otc_order(
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         order_id: usize,
@@ -6464,13 +6464,13 @@ impl Processor {
         );
         check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
 
-        otc_orders.close_perp_order_by_index(order_id)?;
+        otc_orders.cancel_perp_order_by_index(order_id)?;
 
         Ok(())
     }
 
     #[inline(never)]
-    fn close_spot_otc_order(
+    fn cancel_spot_otc_order(
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         order_id: usize,
@@ -6512,7 +6512,7 @@ impl Processor {
         );
         check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
 
-        otc_orders.close_spot_order_by_index(order_id)?;
+        otc_orders.cancel_spot_order_by_index(order_id)?;
 
         Ok(())
     }
@@ -7049,13 +7049,13 @@ impl Processor {
                 msg!("Mango: CreatePerpOtcOrder");
                 Self::create_perp_otc_order(program_id, accounts, price, size, expires, side)
             }
-            MangoInstruction::ClosePerpOtcOrder { order_id } => {
-                msg!("Mango: ClosePerpOtcOrder");
-                Self::close_perp_otc_order(program_id, accounts, order_id)
+            MangoInstruction::CancelPerpOtcOrder { order_id } => {
+                msg!("Mango: CancelPerpOtcOrder");
+                Self::cancel_perp_otc_order(program_id, accounts, order_id)
             }
-            MangoInstruction::CloseSpotOtcOrder { order_id } => {
-                msg!("Mango: CloseSpotOtcOrder");
-                Self::close_spot_otc_order(program_id, accounts, order_id)
+            MangoInstruction::CancelSpotOtcOrder { order_id } => {
+                msg!("Mango: CancelSpotOtcOrder");
+                Self::cancel_spot_otc_order(program_id, accounts, order_id)
             }
         }
     }
