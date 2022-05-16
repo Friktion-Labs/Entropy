@@ -1075,7 +1075,7 @@ pub enum MangoInstruction {
     /// 5. `[]` System program.
     InitOtcOrders,
 
-    /// Creates perp OTC order (`state::PerpOtcOrder`).
+    /// Creates perp OTC order.
     ///
     /// Accounts:
     ///
@@ -1092,6 +1092,32 @@ pub enum MangoInstruction {
         size: u64,
         expires: UnixTimestamp,
         side: Side,
+    },
+
+    /// Closes perp OTC order.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` System program.
+    ClosePerpOtcOrder {
+        order_id: usize,
+    },
+
+    /// Closes spot OTC order.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` System program.
+    CloseSpotOtcOrder {
+        order_id: usize,
     },
 }
 

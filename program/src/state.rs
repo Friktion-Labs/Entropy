@@ -2448,7 +2448,7 @@ impl OtcOrders {
         self.perp_orders_len =
             self.perp_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
 
-        if self.perp_orders[index].status != OtcOrderStatus::Created {
+        if self.perp_orders[index].status == OtcOrderStatus::Created {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2479,7 +2479,7 @@ impl OtcOrders {
         self.spot_orders_len =
             self.spot_orders_len.checked_sub(1).ok_or(throw_err!(MangoErrorCode::MathError))?;
 
-        if self.spot_orders[index].status != OtcOrderStatus::Created {
+        if self.spot_orders[index].status == OtcOrderStatus::Created {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2504,7 +2504,7 @@ impl OtcOrders {
 
     pub fn delete_all_perp_orders(&mut self) -> MangoResult<()> {
         // Ensure, that all orders are shouldn't in "Created" status
-        if self.perp_orders.iter().find(|x| x.status != OtcOrderStatus::Created).is_some() {
+        if self.perp_orders.iter().find(|x| x.status == OtcOrderStatus::Created).is_some() {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2519,7 +2519,7 @@ impl OtcOrders {
 
     pub fn delete_all_spot_orders(&mut self) -> MangoResult<()> {
         // Ensure, that all orders are shouldn't in "Created" status
-        if self.spot_orders.iter().find(|x| x.status != OtcOrderStatus::Created).is_some() {
+        if self.spot_orders.iter().find(|x| x.status == OtcOrderStatus::Created).is_some() {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
         }
 
@@ -2532,9 +2532,55 @@ impl OtcOrders {
         Ok(())
     }
 
+    pub fn close_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+        if index >= self.perp_orders_len {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
+        }
+
+        let order = &mut self.perp_orders[index];
+
+        if order.status != OtcOrderStatus::Created {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
+        }
+
+        order.status = OtcOrderStatus::Canceled;
+
+        Ok(())
+    }
+
+    pub fn close_spot_order_by_index(&mut self, index: usize) -> MangoResult<()> {
+        if index >= self.spot_orders_len {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
+        }
+
+        let order = &mut self.spot_orders[index];
+
+        if order.status != OtcOrderStatus::Created {
+            return Err(throw_err!(MangoErrorCode::InvalidOtcOrderStatus));
+        }
+
+        order.status = OtcOrderStatus::Canceled;
+
+        Ok(())
+    }
+
     pub fn add_perp_order(&mut self, perp_otc_order: PerpOtcOrder) -> MangoResult<()> {
         if self.perp_orders_len == MAX_PERP_OTC_ORDERS {
-            return Err(throw_err!(MangoErrorCode::MaxOtcOrdersReached));
+            let target_index = self.perp_orders.iter().enumerate().find_map(|(index, order)| {
+                if order.status == OtcOrderStatus::Canceled
+                    || order.status == OtcOrderStatus::Filled
+                {
+                    Some(index)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(target_index) = target_index {
+                self.delete_perp_order_by_index(target_index)?;
+            } else {
+                return Err(throw_err!(MangoErrorCode::MaxOtcOrdersReached));
+            }
         }
 
         self.perp_orders[self.perp_orders_len] = perp_otc_order;
@@ -2546,7 +2592,21 @@ impl OtcOrders {
 
     pub fn add_spot_order(&mut self, spot_otc_order: SpotOtcOrder) -> MangoResult<()> {
         if self.spot_orders_len == MAX_SPOT_OTC_ORDERS {
-            return Err(throw_err!(MangoErrorCode::MaxOtcOrdersReached));
+            let target_index = self.spot_orders.iter().enumerate().find_map(|(index, order)| {
+                if order.status == OtcOrderStatus::Canceled
+                    || order.status == OtcOrderStatus::Filled
+                {
+                    Some(index)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(target_index) = target_index {
+                self.delete_spot_order_by_index(target_index)?;
+            } else {
+                return Err(throw_err!(MangoErrorCode::MaxOtcOrdersReached));
+            }
         }
 
         self.spot_orders[self.spot_orders_len] = spot_otc_order;
