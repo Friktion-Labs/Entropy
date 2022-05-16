@@ -2621,7 +2621,7 @@ impl OtcOrders {
 mod tests {
     use super::{
         mem, DataType, MetaData, OtcOrderStatus, OtcOrders, PerpOtcOrder, Pubkey, Side,
-        SpotOtcOrder, I80F48,
+        SpotOtcOrder, I80F48, MAX_PERP_OTC_ORDERS, MAX_SPOT_OTC_ORDERS,
     };
     use solana_program::system_program;
 
@@ -2682,6 +2682,198 @@ mod tests {
         assert_eq!(otc_orders.perp_orders[0].counterparty_wallet, counterparty_wallet);
         assert_eq!(otc_orders.perp_orders[1].counterparty_wallet, counterparty_wallet);
         assert_eq!(otc_orders.perp_orders[2].status, OtcOrderStatus::Uninitialized);
+    }
+
+    #[test]
+    pub fn success_otc_add_perp_order_cleanup() {
+        let mut otc_orders = setup_otc_orders();
+
+        let counterparty_wallet = Pubkey::new_unique();
+        let perp_market = Pubkey::new_unique();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Canceled,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 1000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        assert_eq!(otc_orders.perp_orders_len, MAX_PERP_OTC_ORDERS);
+
+        otc_orders
+            .add_perp_order(PerpOtcOrder {
+                creator_side: Side::Bid,
+                price: I80F48::ONE,
+                size: 2000000,
+                client_creation_time: 0,
+                expires: 1,
+                counterparty_wallet,
+                perp_market,
+                perp_account_index: 0,
+                status: OtcOrderStatus::Created,
+            })
+            .unwrap();
+
+        assert_eq!(otc_orders.perp_orders_len, MAX_PERP_OTC_ORDERS);
+        assert_eq!(otc_orders.perp_orders[2].status, OtcOrderStatus::Created);
+        assert_eq!(otc_orders.perp_orders[MAX_PERP_OTC_ORDERS - 1].size, 2000000);
+    }
+
+    #[test]
+    pub fn success_otc_add_spot_order_cleanup() {
+        let mut otc_orders = setup_otc_orders();
+
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Filled }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Created }).unwrap();
+
+        assert_eq!(otc_orders.spot_orders_len, MAX_SPOT_OTC_ORDERS);
+
+        otc_orders.add_spot_order(SpotOtcOrder { status: OtcOrderStatus::Filled }).unwrap();
+
+        assert_eq!(otc_orders.spot_orders_len, MAX_SPOT_OTC_ORDERS);
+        assert_eq!(otc_orders.spot_orders[3].status, OtcOrderStatus::Created);
+        assert_eq!(otc_orders.spot_orders[MAX_SPOT_OTC_ORDERS - 1].status, OtcOrderStatus::Filled);
     }
 
     #[test]
