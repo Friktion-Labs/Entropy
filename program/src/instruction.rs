@@ -1119,6 +1119,13 @@ pub enum MangoInstruction {
     CancelSpotOtcOrder {
         order_id: usize,
     },
+
+    /// Take perp OTC order.
+    ///
+    /// Accounts:
+    TakePerpOtcOrder {
+        order_id: usize,
+    },
 }
 
 impl MangoInstruction {
