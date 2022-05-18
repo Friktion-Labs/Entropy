@@ -6404,17 +6404,16 @@ impl Processor {
             .ok_or(throw_err!(MangoErrorCode::InvalidMarket))?;
 
         // Add perp OTC order
-        let perp_otc_order = PerpOtcOrder {
-            creator_side: side,
+        let perp_otc_order = PerpOtcOrder::new(
+            side,
             price,
             size,
-            creation_time: clock.unix_timestamp,
+            clock.unix_timestamp,
             expires,
-            counterparty_wallet: *counterparty_wallet_ai.key,
-            perp_market: *perp_market_ai.key,
+            counterparty_wallet_ai.key.clone(),
+            perp_market_ai.key.clone(),
             perp_account_index,
-            status: OtcOrderStatus::Created,
-        };
+        );
 
         otc_orders.add_perp_order(perp_otc_order)?;
 
@@ -6525,8 +6524,9 @@ impl Processor {
     ) -> MangoResult {
         const NUM_FIXED: usize = 9;
 
-        let accounts = array_ref![accounts, 0, NUM_FIXED + MAX_PAIRS];
-        let (fixed_ais, open_orders_ais) = array_refs![accounts, NUM_FIXED, MAX_PAIRS];
+        let accounts = array_ref![accounts, 0, NUM_FIXED + MAX_PAIRS + MAX_PAIRS];
+        let (fixed_ais, open_orders_counterparty_ais, open_orders_creator_ais) =
+            array_refs![accounts, NUM_FIXED, MAX_PAIRS, MAX_PAIRS];
 
         let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, mango_cache_ai, event_queue_ai, clock_ai, system_program_ai] =
             fixed_ais;
@@ -6534,8 +6534,11 @@ impl Processor {
         // Unpack accounts state
         let mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
 
-        let _creator_mango_account_state =
-            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+        let mut creator_mango_account_state = MangoAccount::load_mut_checked(
+            creator_mango_account_ai,
+            program_id,
+            mango_group_ai.key,
+        )?;
 
         let mut counterparty_mango_account_state = MangoAccount::load_mut_checked(
             counterparty_mango_account_ai,
@@ -6574,56 +6577,111 @@ impl Processor {
 
         let clock = Clock::get()?;
 
-        let order = &mut otc_orders.perp_orders[order_id];
+        let order = otc_orders.get_mut_perp_order(order_id)?;
         check_eq!(&order.counterparty_wallet, owner_ai.key, MangoErrorCode::InvalidAccount)?;
         check!(order.expires > clock.unix_timestamp, MangoErrorCode::OtcOrderExpired)?;
         check_eq!(order.status, OtcOrderStatus::Created, MangoErrorCode::InvalidOtcOrderStatus)?;
         order.status = OtcOrderStatus::Filled;
 
         // Main logic
-
-        let active_assets = UserActiveAssets::new(
+        let active_assets_counterparty = UserActiveAssets::new(
             &mango_group_state,
             &counterparty_mango_account_state,
             vec![(AssetType::Perp, order.perp_account_index)],
         );
 
-        mango_cache.check_valid(&mango_group_state, &active_assets, clock.unix_timestamp as u64)?;
+        let active_assets_creator = UserActiveAssets::new(
+            &mango_group_state,
+            &creator_mango_account_state,
+            vec![(AssetType::Perp, order.perp_account_index)],
+        );
 
-        let mut health_cache = HealthCache::new(active_assets);
-        health_cache.init_vals(
+        mango_cache.check_valid(
+            &mango_group_state,
+            &active_assets_counterparty,
+            clock.unix_timestamp as u64,
+        )?;
+        mango_cache.check_valid(
+            &mango_group_state,
+            &active_assets_creator,
+            clock.unix_timestamp as u64,
+        )?;
+
+        let mut health_cache_counterparty = HealthCache::new(active_assets_counterparty);
+        let mut health_cache_creator = HealthCache::new(active_assets_creator);
+
+        health_cache_counterparty.init_vals(
             &mango_group_state,
             &mango_cache,
             &counterparty_mango_account_state,
-            open_orders_ais,
+            open_orders_counterparty_ais,
         )?;
-        let pre_health = health_cache.get_health(&mango_group_state, HealthType::Init);
+        health_cache_creator.init_vals(
+            &mango_group_state,
+            &mango_cache,
+            &creator_mango_account_state,
+            open_orders_creator_ais,
+        )?;
+
+        let pre_health_counterparty =
+            health_cache_counterparty.get_health(&mango_group_state, HealthType::Init);
+        let pre_health_creator =
+            health_cache_creator.get_health(&mango_group_state, HealthType::Init);
 
         // Update the being_liquidated flag
         if counterparty_mango_account_state.being_liquidated {
-            if pre_health >= ZERO_I80F48 {
+            if pre_health_counterparty >= ZERO_I80F48 {
                 counterparty_mango_account_state.being_liquidated = false;
             } else {
                 return Err(throw_err!(MangoErrorCode::BeingLiquidated));
             }
         }
 
+        // Update the being_liquidated flag
+        if creator_mango_account_state.being_liquidated {
+            if pre_health_creator >= ZERO_I80F48 {
+                creator_mango_account_state.being_liquidated = false;
+            } else {
+                return Err(throw_err!(MangoErrorCode::BeingLiquidated));
+            }
+        }
+
         // This means health must only go up
-        let health_up_only = pre_health < ZERO_I80F48;
+        let health_up_only_counterparty = pre_health_counterparty < ZERO_I80F48;
+
+        // This means health must only go up
+        let health_up_only_creator = pre_health_creator < ZERO_I80F48;
 
         // TODO: Calculate new balances according to params in `order` and fee
-        // TODO: Change variables in associated `PerpAccount`
+        // TODO: Update base / quote values
 
-        health_cache.update_perp_val(
+        health_cache_counterparty.update_perp_val(
             &mango_group_state,
             &mango_cache,
             &counterparty_mango_account_state,
             order.perp_account_index,
         )?;
-        let post_health = health_cache.get_health(&mango_group_state, HealthType::Init);
+        health_cache_creator.update_perp_val(
+            &mango_group_state,
+            &mango_cache,
+            &creator_mango_account_state,
+            order.perp_account_index,
+        )?;
+
+        let post_health_counterparty =
+            health_cache_counterparty.get_health(&mango_group_state, HealthType::Init);
+        let post_health_creator =
+            health_cache_creator.get_health(&mango_group_state, HealthType::Init);
 
         check!(
-            post_health >= ZERO_I80F48 || (health_up_only && post_health >= pre_health),
+            post_health_counterparty >= ZERO_I80F48
+                || (health_up_only_counterparty
+                    && post_health_counterparty >= pre_health_counterparty),
+            MangoErrorCode::InsufficientFunds
+        )?;
+        check!(
+            post_health_creator >= ZERO_I80F48
+                || (health_up_only_creator && post_health_creator >= pre_health_creator),
             MangoErrorCode::InsufficientFunds
         )
     }

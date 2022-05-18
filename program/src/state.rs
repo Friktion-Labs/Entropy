@@ -2368,11 +2368,42 @@ pub struct PerpOtcOrder {
     pub status: OtcOrderStatus,
 }
 
+impl PerpOtcOrder {
+    pub fn new(
+        creator_side: Side,
+        price: I80F48,
+        size: u64,
+        creation_time: UnixTimestamp,
+        expires: UnixTimestamp,
+        counterparty_wallet: Pubkey,
+        perp_market: Pubkey,
+        perp_account_index: usize,
+    ) -> Self {
+        PerpOtcOrder {
+            creator_side,
+            price,
+            size,
+            creation_time,
+            expires,
+            counterparty_wallet,
+            perp_market,
+            perp_account_index,
+            status: OtcOrderStatus::Created,
+        }
+    }
+}
+
 /// TODO: Implement schema.
 #[derive(Copy, Clone, Pod)]
 #[repr(C)]
 pub struct SpotOtcOrder {
     pub status: OtcOrderStatus,
+}
+
+impl SpotOtcOrder {
+    pub fn new() -> Self {
+        SpotOtcOrder { status: OtcOrderStatus::Created }
+    }
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
@@ -2438,6 +2469,16 @@ impl OtcOrders {
             MangoErrorCode::InvalidAccountState
         )?;
         Ok(state)
+    }
+
+    pub fn get_mut_perp_order(&mut self, index: usize) -> MangoResult<&mut PerpOtcOrder> {
+        check!(index < self.perp_orders_len, MangoErrorCode::InvalidOtcOrderIndex)?;
+        Ok(&mut self.perp_orders[index])
+    }
+
+    pub fn get_mut_spot_order(&mut self, index: usize) -> MangoResult<&mut SpotOtcOrder> {
+        check!(index < self.spot_orders_len, MangoErrorCode::InvalidOtcOrderIndex)?;
+        Ok(&mut self.spot_orders[index])
     }
 
     pub fn delete_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
