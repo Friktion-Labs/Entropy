@@ -6521,14 +6521,27 @@ impl Processor {
         program_id: &Pubkey,
         accounts: &[AccountInfo],
         order_id: usize,
+        open_orders_count: usize,
     ) -> MangoResult {
         const NUM_FIXED: usize = 9;
 
-        let (fixed_ais, packed_open_orders_counterparty_ais, packed_open_orders_creator_ais) =
-            array_refs![accounts, NUM_FIXED, MAX_PAIRS; ..;];
-
         let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, mango_cache_ai, event_queue_ai, clock_ai, system_program_ai] =
-            fixed_ais;
+            array_ref![accounts, 0, NUM_FIXED];
+
+        let open_orders_ais = &accounts[NUM_FIXED..];
+        let (packed_open_orders_counterparty_ais, packed_open_orders_creator_ais): (
+            &[AccountInfo],
+            &[AccountInfo],
+        ) = if open_orders_ais.is_empty() {
+            (&[], &[])
+        } else {
+            let packed_open_orders_counterparty_ais =
+                if open_orders_count == 0 { &[] } else { &open_orders_ais[..open_orders_count] };
+
+            let packed_open_orders_creator_ais = &open_orders_ais[open_orders_count..];
+
+            (packed_open_orders_counterparty_ais, packed_open_orders_creator_ais)
+        };
 
         // Unpack accounts state
         let mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
@@ -7235,9 +7248,9 @@ impl Processor {
                 msg!("Mango: CancelSpotOtcOrder");
                 Self::cancel_spot_otc_order(program_id, accounts, order_id)
             }
-            MangoInstruction::TakePerpOtcOrder { order_id } => {
+            MangoInstruction::TakePerpOtcOrder { order_id, open_orders_count } => {
                 msg!("Mango: TakePerpOtcOrder");
-                Self::take_perp_otc_order(program_id, accounts, order_id)
+                Self::take_perp_otc_order(program_id, accounts, order_id, open_orders_count)
             }
         }
     }

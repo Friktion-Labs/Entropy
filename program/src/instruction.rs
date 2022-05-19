@@ -1125,6 +1125,7 @@ pub enum MangoInstruction {
     /// Accounts:
     TakePerpOtcOrder {
         order_id: usize,
+        open_orders_count: usize,
     },
 }
 
