@@ -6524,9 +6524,8 @@ impl Processor {
     ) -> MangoResult {
         const NUM_FIXED: usize = 9;
 
-        let accounts = array_ref![accounts, 0, NUM_FIXED + MAX_PAIRS + MAX_PAIRS];
-        let (fixed_ais, open_orders_counterparty_ais, open_orders_creator_ais) =
-            array_refs![accounts, NUM_FIXED, MAX_PAIRS, MAX_PAIRS];
+        let (fixed_ais, packed_open_orders_counterparty_ais, packed_open_orders_creator_ais) =
+            array_refs![accounts, NUM_FIXED, MAX_PAIRS; ..;];
 
         let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, mango_cache_ai, event_queue_ai, clock_ai, system_program_ai] =
             fixed_ais;
@@ -6546,7 +6545,8 @@ impl Processor {
             mango_group_ai.key,
         )?;
 
-        let mango_cache = MangoCache::load_checked(mango_cache_ai, program_id, &mango_group_state)?;
+        let mango_cache_state =
+            MangoCache::load_checked(mango_cache_ai, program_id, &mango_group_state)?;
 
         let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
 
@@ -6583,6 +6583,15 @@ impl Processor {
         check_eq!(order.status, OtcOrderStatus::Created, MangoErrorCode::InvalidOtcOrderStatus)?;
         order.status = OtcOrderStatus::Filled;
 
+        let counterparty_open_orders_ais = counterparty_mango_account_state
+            .checked_unpack_open_orders(&mango_group_state, packed_open_orders_counterparty_ais)?;
+        let counterparty_open_orders_accounts =
+            load_open_orders_accounts(&counterparty_open_orders_ais)?;
+
+        let creator_open_orders_ais = creator_mango_account_state
+            .checked_unpack_open_orders(&mango_group_state, packed_open_orders_creator_ais)?;
+        let creator_open_orders_accounts = load_open_orders_accounts(&creator_open_orders_ais)?;
+
         // Main logic
         let active_assets_counterparty = UserActiveAssets::new(
             &mango_group_state,
@@ -6596,12 +6605,12 @@ impl Processor {
             vec![(AssetType::Perp, order.perp_account_index)],
         );
 
-        mango_cache.check_valid(
+        mango_cache_state.check_valid(
             &mango_group_state,
             &active_assets_counterparty,
             clock.unix_timestamp as u64,
         )?;
-        mango_cache.check_valid(
+        mango_cache_state.check_valid(
             &mango_group_state,
             &active_assets_creator,
             clock.unix_timestamp as u64,
@@ -6610,17 +6619,17 @@ impl Processor {
         let mut health_cache_counterparty = HealthCache::new(active_assets_counterparty);
         let mut health_cache_creator = HealthCache::new(active_assets_creator);
 
-        health_cache_counterparty.init_vals(
+        health_cache_counterparty.init_vals_with_orders_vec(
             &mango_group_state,
-            &mango_cache,
+            &mango_cache_state,
             &counterparty_mango_account_state,
-            open_orders_counterparty_ais,
+            &counterparty_open_orders_accounts,
         )?;
-        health_cache_creator.init_vals(
+        health_cache_creator.init_vals_with_orders_vec(
             &mango_group_state,
-            &mango_cache,
+            &mango_cache_state,
             &creator_mango_account_state,
-            open_orders_creator_ais,
+            &creator_open_orders_accounts,
         )?;
 
         let pre_health_counterparty =
@@ -6657,13 +6666,13 @@ impl Processor {
 
         health_cache_counterparty.update_perp_val(
             &mango_group_state,
-            &mango_cache,
+            &mango_cache_state,
             &counterparty_mango_account_state,
             order.perp_account_index,
         )?;
         health_cache_creator.update_perp_val(
             &mango_group_state,
-            &mango_cache,
+            &mango_cache_state,
             &creator_mango_account_state,
             order.perp_account_index,
         )?;
