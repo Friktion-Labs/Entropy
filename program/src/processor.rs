@@ -6523,9 +6523,9 @@ impl Processor {
         order_id: usize,
         open_orders_count: usize,
     ) -> MangoResult {
-        const NUM_FIXED: usize = 9;
+        const NUM_FIXED: usize = 10;
 
-        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, mango_cache_ai, event_queue_ai, clock_ai, system_program_ai] =
+        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, perp_market_ai, mango_cache_ai, _event_queue_ai, clock_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
         let open_orders_ais = &accounts[NUM_FIXED..];
@@ -6561,6 +6561,9 @@ impl Processor {
         let mango_cache_state =
             MangoCache::load_checked(mango_cache_ai, program_id, &mango_group_state)?;
 
+        let mut perp_market_state =
+            PerpMarket::load_mut_checked(perp_market_ai, program_id, mango_group_ai.key)?;
+
         let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
 
         // Check accounts
@@ -6592,9 +6595,12 @@ impl Processor {
 
         let order = otc_orders.get_mut_perp_order(order_id)?;
         check_eq!(&order.counterparty_wallet, owner_ai.key, MangoErrorCode::InvalidAccount)?;
+        check_eq!(&order.perp_market, perp_market_ai.key, MangoErrorCode::InvalidAccount)?;
         check!(order.expires > clock.unix_timestamp, MangoErrorCode::OtcOrderExpired)?;
         check_eq!(order.status, OtcOrderStatus::Created, MangoErrorCode::InvalidOtcOrderStatus)?;
         order.status = OtcOrderStatus::Filled;
+
+        let perp_market_cache = &mango_cache_state.perp_market_cache[order.perp_account_index];
 
         let counterparty_open_orders_ais = counterparty_mango_account_state
             .checked_unpack_open_orders(&mango_group_state, packed_open_orders_counterparty_ais)?;
@@ -6674,8 +6680,61 @@ impl Processor {
         // This means health must only go up
         let health_up_only_creator = pre_health_creator < ZERO_I80F48;
 
-        // TODO: Calculate new balances according to params in `order` and fee
-        // TODO: Update base / quote values
+        // Rebase counterparty position
+        let counterparty_fill = FillEvent::new(
+            if order.creator_side == Side::Ask { Side::Bid } else { Side::Ask },
+            0,
+            false,
+            0,
+            0,
+            creator_mango_account_state.owner,
+            0,
+            0,
+            I80F48!(0),
+            0,
+            0,
+            *owner_ai.key,
+            0,
+            0,
+            I80F48!(0),
+            order.price.to_num::<i64>(),
+            order.size as i64,
+            0,
+        );
+        counterparty_mango_account_state.execute_taker(
+            order.perp_account_index,
+            &mut perp_market_state,
+            perp_market_cache,
+            &counterparty_fill,
+        )?;
+
+        // Rebase creator position
+        let creator_fill = FillEvent::new(
+            order.creator_side,
+            0,
+            false,
+            0,
+            0,
+            *owner_ai.key,
+            0,
+            0,
+            I80F48!(0),
+            0,
+            0,
+            creator_mango_account_state.owner,
+            0,
+            0,
+            I80F48!(0),
+            order.price.to_num::<i64>(),
+            order.size as i64,
+            0,
+        );
+        creator_mango_account_state.execute_taker(
+            order.perp_account_index,
+            &mut perp_market_state,
+            perp_market_cache,
+            &creator_fill,
+        )?;
 
         health_cache_counterparty.update_perp_val(
             &mango_group_state,
