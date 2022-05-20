@@ -6525,7 +6525,7 @@ impl Processor {
     ) -> MangoResult {
         const NUM_FIXED: usize = 10;
 
-        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, perp_market_ai, mango_cache_ai, _event_queue_ai, clock_ai, system_program_ai] =
+        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, perp_market_ai, mango_cache_ai, _event_queue_ai, _clock_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
         let open_orders_ais = &accounts[NUM_FIXED..];
@@ -6680,6 +6680,18 @@ impl Processor {
         // This means health must only go up
         let health_up_only_creator = pre_health_creator < ZERO_I80F48;
 
+        let match_qty = order.size as i64;
+        let match_quote = match_qty
+            .checked_mul(
+                order.price.checked_to_num::<i64>().ok_or(throw_err!(MangoErrorCode::MathError))?,
+            )
+            .ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        counterparty_mango_account_state.perp_accounts[order.perp_account_index]
+            .add_taker_trade(match_qty, -match_quote);
+        creator_mango_account_state.perp_accounts[order.perp_account_index]
+            .add_taker_trade(match_qty, -match_quote);
+
         // Rebase counterparty position
         let counterparty_fill = FillEvent::new(
             if order.creator_side == Side::Ask { Side::Bid } else { Side::Ask },
@@ -6697,7 +6709,7 @@ impl Processor {
             0,
             0,
             I80F48!(0),
-            order.price.to_num::<i64>(),
+            order.price.checked_to_num::<i64>().ok_or(throw_err!(MangoErrorCode::MathError))?,
             order.size as i64,
             0,
         );
@@ -6725,7 +6737,7 @@ impl Processor {
             0,
             0,
             I80F48!(0),
-            order.price.to_num::<i64>(),
+            order.price.checked_to_num::<i64>().ok_or(throw_err!(MangoErrorCode::MathError))?,
             order.size as i64,
             0,
         );
