@@ -2353,7 +2353,7 @@ pub enum OtcOrderStatus {
 #[repr(C)]
 pub struct PerpOtcOrder {
     pub creator_side: Side,
-    pub price: I80F48,
+    pub price: i64,
 
     /// Position size.
     pub size: u64,
@@ -2371,7 +2371,7 @@ pub struct PerpOtcOrder {
 impl PerpOtcOrder {
     pub fn new(
         creator_side: Side,
-        price: I80F48,
+        price: i64,
         size: u64,
         creation_time: UnixTimestamp,
         expires: UnixTimestamp,
@@ -2690,7 +2690,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2708,7 +2708,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2735,7 +2735,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2749,7 +2749,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2763,7 +2763,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2777,7 +2777,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2791,7 +2791,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2805,7 +2805,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2819,7 +2819,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2833,7 +2833,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2847,7 +2847,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2861,7 +2861,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2877,7 +2877,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 2000000,
                 creation_time: 0,
                 expires: 1,
@@ -2945,7 +2945,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2966,7 +2966,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -2980,7 +2980,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -3001,7 +3001,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 2000000,
                 creation_time: 0,
                 expires: 1,
@@ -3066,7 +3066,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,
@@ -3080,7 +3080,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 2,
@@ -3094,7 +3094,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 3,
@@ -3145,7 +3145,7 @@ mod tests {
         otc_orders
             .add_perp_order(PerpOtcOrder {
                 creator_side: Side::Bid,
-                price: I80F48::ONE,
+                price: 1,
                 size: 1000000,
                 creation_time: 0,
                 expires: 1,

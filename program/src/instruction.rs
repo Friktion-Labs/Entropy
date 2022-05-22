@@ -1088,7 +1088,7 @@ pub enum MangoInstruction {
     /// 6. `[]` Clock sysvar.
     /// 7. `[]` System program.
     CreatePerpOtcOrder {
-        price: I80F48,
+        price: i64,
         size: u64,
         expires: UnixTimestamp,
         side: Side,

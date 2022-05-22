@@ -6341,7 +6341,7 @@ impl Processor {
     fn create_perp_otc_order(
         program_id: &Pubkey,
         accounts: &[AccountInfo],
-        price: I80F48,
+        price: i64,
         size: u64,
         expires: UnixTimestamp,
         side: Side,
@@ -6680,17 +6680,24 @@ impl Processor {
         // This means health must only go up
         let health_up_only_creator = pre_health_creator < ZERO_I80F48;
 
-        let match_qty = order.size as i64;
-        let match_quote = match_qty
-            .checked_mul(
-                order.price.checked_to_num::<i64>().ok_or(throw_err!(MangoErrorCode::MathError))?,
-            )
-            .ok_or(throw_err!(MangoErrorCode::MathError))?;
+        let match_qty: i64 =
+            order.size.try_into().map_err(|_| throw_err!(MangoErrorCode::MathError))?;
+        let match_quote =
+            match_qty.checked_mul(order.price).ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        // Negative `match_qty`, positive `match_quote` for selling account
+        // Positive `match_qty`, negative `match_quote` for buying account
+
+        let (match_qty_creator, match_quote_creator) = if order.creator_side == Side::Bid {
+            (match_qty, -match_quote)
+        } else {
+            (-match_qty, match_quote)
+        };
 
         counterparty_mango_account_state.perp_accounts[order.perp_account_index]
-            .add_taker_trade(match_qty, -match_quote);
+            .add_taker_trade(match_qty_creator * -1, match_quote_creator * -1);
         creator_mango_account_state.perp_accounts[order.perp_account_index]
-            .add_taker_trade(match_qty, -match_quote);
+            .add_taker_trade(match_qty_creator, match_quote_creator);
 
         // Rebase counterparty position
         let counterparty_fill = FillEvent::new(
@@ -6709,8 +6716,8 @@ impl Processor {
             0,
             0,
             I80F48!(0),
-            order.price.checked_to_num::<i64>().ok_or(throw_err!(MangoErrorCode::MathError))?,
-            order.size as i64,
+            order.price,
+            match_qty,
             0,
         );
         counterparty_mango_account_state.execute_taker(
@@ -6737,8 +6744,8 @@ impl Processor {
             0,
             0,
             I80F48!(0),
-            order.price.checked_to_num::<i64>().ok_or(throw_err!(MangoErrorCode::MathError))?,
-            order.size as i64,
+            order.price,
+            match_qty,
             0,
         );
         creator_mango_account_state.execute_taker(
