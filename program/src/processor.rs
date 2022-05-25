@@ -7573,7 +7573,7 @@ fn read_oracle(
             }
             OracleType::SwitchboardV2 => {
                 msg!("switchboard V2");
-                let mut value = get_switchboard_value(oracle_ai).unwrap();
+                let value = get_switchboard_value(oracle_ai).unwrap();
 
                 let decimals = quote_decimals.checked_sub(base_decimals).unwrap();
 

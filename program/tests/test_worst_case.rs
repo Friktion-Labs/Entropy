@@ -175,8 +175,8 @@ async fn test_worst_case_v2() {
 
     for mint_index in 0..num_orders {
         let base_mint = test.with_mint(mint_index);
-        let base_deposit_amount = (base_deposit_size * base_mint.unit) as u64;
-        let lender_base_deposit = &mango_group_cookie.mango_accounts[lender_user_index]
+        let _base_deposit_amount = (base_deposit_size * base_mint.unit) as u64;
+        let _lender_base_deposit = &mango_group_cookie.mango_accounts[lender_user_index]
             .mango_account
             .get_native_deposit(
                 &mango_group_cookie.mango_cache.root_bank_cache[mint_index],

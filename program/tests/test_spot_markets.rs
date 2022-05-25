@@ -1,7 +1,7 @@
 mod program_test;
 use fixed::types::I80F48;
 use mango::processor::get_leverage_weights;
-use mango::state::{MangoGroup, RootBank, SpotMarketInfo, QUOTE_INDEX, ZERO_I80F48};
+use mango::state::{MangoGroup, RootBank, QUOTE_INDEX, ZERO_I80F48};
 use program_test::assertions::*;
 use program_test::cookies::*;
 use program_test::scenarios::*;

@@ -117,7 +117,7 @@ pub enum AssetType {
 }
 
 #[derive(Copy, Clone, Pod, Default)]
-#[repr(C)]
+#[repr(packed)]
 /// Stores meta information about the `Account` on chain
 pub struct MetaData {
     pub data_type: u8,
@@ -142,7 +142,7 @@ impl MetaData {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct TokenInfo {
     pub mint: Pubkey,
     pub root_bank: Pubkey,
@@ -157,7 +157,7 @@ impl TokenInfo {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct SpotMarketInfo {
     pub spot_market: Pubkey,
     pub maint_asset_weight: I80F48,
@@ -174,7 +174,7 @@ impl SpotMarketInfo {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct PerpMarketInfo {
     pub perp_market: Pubkey, // One of these may be empty
     pub maint_asset_weight: I80F48,
@@ -195,7 +195,7 @@ impl PerpMarketInfo {
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct MangoGroup {
     pub meta_data: MetaData,
     pub num_oracles: usize, // incremented every time add_oracle is called
@@ -298,7 +298,7 @@ impl MangoGroup {
 
 /// This is the root bank for one token's lending and borrowing info
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct RootBank {
     pub meta_data: MetaData,
 
@@ -502,7 +502,7 @@ impl RootBank {
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct NodeBank {
     pub meta_data: MetaData,
 
@@ -601,7 +601,7 @@ impl NodeBank {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct PriceCache {
     pub price: I80F48, // unit is interpreted as how many quote native tokens for 1 base native token
     pub last_update: u64,
@@ -620,7 +620,7 @@ impl PriceCache {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct RootBankCache {
     pub deposit_index: I80F48,
     pub borrow_index: I80F48,
@@ -637,7 +637,7 @@ impl RootBankCache {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct PerpMarketCache {
     pub long_funding: I80F48,
     pub short_funding: I80F48,
@@ -654,7 +654,7 @@ impl PerpMarketCache {
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct MangoCache {
     pub meta_data: MetaData,
 
@@ -879,8 +879,8 @@ impl HealthCache {
                 // apply weights, cache result, return health
                 let mut health = self.quote;
                 for i in 0..mango_group.num_oracles {
-                    let spot_market_info = &mango_group.spot_markets[i];
-                    let perp_market_info = &mango_group.perp_markets[i];
+                    let _spot_market_info = &mango_group.spot_markets[i];
+                    let _perp_market_info = &mango_group.perp_markets[i];
 
                     if self.active_assets.spot[i] {
                         let (base, quote) = self.spot[i];
@@ -1234,7 +1234,7 @@ impl HealthCache {
 }
 
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct MangoAccount {
     pub meta_data: MetaData,
 
@@ -1800,7 +1800,7 @@ impl MangoAccount {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 pub struct PerpAccount {
     pub base_position: i64,     // measured in base lots
     pub quote_position: I80F48, // measured in native quote
@@ -2085,7 +2085,7 @@ impl PerpAccount {
 }
 
 #[derive(Copy, Clone, Pod)]
-#[repr(C)]
+#[repr(packed)]
 /// Information regarding market maker incentives for a perp market
 pub struct LiquidityMiningInfo {
     /// Used to convert liquidity points to MNGO
@@ -2109,7 +2109,7 @@ pub struct LiquidityMiningInfo {
 /// This will hold top level info about the perps market
 /// Likely all perps transactions on a market will be locked on this one because this will be passed in as writable
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct PerpMarket {
     pub meta_data: MetaData,
 
@@ -3326,7 +3326,7 @@ pub enum TriggerCondition {
 const ADVANCED_ORDER_SIZE: usize = size_of::<PerpTriggerOrder>();
 
 #[derive(Copy, Clone, Pod, TriviallyTransmutable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct AnyAdvancedOrder {
     pub advanced_order_type: AdvancedOrderType,
     pub is_active: bool,
@@ -3334,7 +3334,7 @@ pub struct AnyAdvancedOrder {
 }
 
 #[derive(Copy, Clone, Pod, TriviallyTransmutable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct PerpTriggerOrder {
     pub advanced_order_type: AdvancedOrderType,
     pub is_active: bool,
@@ -3387,7 +3387,7 @@ const_assert_eq!(size_of::<AnyAdvancedOrder>(), size_of::<PerpTriggerOrder>());
 
 pub const MAX_ADVANCED_ORDERS: usize = 32;
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct AdvancedOrders {
     pub meta_data: MetaData,
     pub orders: [AnyAdvancedOrder; MAX_ADVANCED_ORDERS],
@@ -3427,7 +3427,7 @@ impl AdvancedOrders {
 
 /// Store the referrer's mango account
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct ReferrerMemory {
     pub meta_data: MetaData,
     pub referrer_mango_account: Pubkey,
@@ -3469,7 +3469,7 @@ impl ReferrerMemory {
 
 /// Register the referrer's id to be used in the URL
 #[derive(Copy, Clone, Pod, Loadable)]
-#[repr(C)]
+#[repr(packed)]
 pub struct ReferrerIdRecord {
     pub meta_data: MetaData,
     pub referrer_mango_account: Pubkey,
