@@ -6327,7 +6327,7 @@ impl Processor {
         )?;
 
         let _ = OtcOrders::load_and_init(
-            otc_order_owner_ai,
+            otc_orders_pda_ai,
             program_id,
             &rent,
             creator_mango_account_ai.key,
@@ -6523,9 +6523,9 @@ impl Processor {
         order_id: usize,
         open_orders_count: usize,
     ) -> MangoResult {
-        const NUM_FIXED: usize = 10;
+        const NUM_FIXED: usize = 9;
 
-        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, perp_market_ai, mango_cache_ai, _event_queue_ai, _clock_ai, system_program_ai] =
+        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, perp_market_ai, mango_cache_ai, _clock_ai, system_program_ai] =
             array_ref![accounts, 0, NUM_FIXED];
 
         let open_orders_ais = &accounts[NUM_FIXED..];
