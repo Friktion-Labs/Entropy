@@ -606,6 +606,35 @@ impl MangoProgramTest {
     }
 
     #[allow(dead_code)]
+    pub async fn with_health<'a>(
+        &mut self,
+        mango_group: &MangoGroup,
+        user_mango_account: &MangoAccount,
+        active_assets: UserActiveAssets,
+        open_orders: &'a Vec<AccountInfo<'a>>,
+    ) -> I80F48 {
+        let mango_cache = self.load_account::<MangoCache>(mango_group.mango_cache).await;
+
+        let packed_open_orders =
+            user_mango_account.checked_unpack_open_orders(mango_group, open_orders).unwrap();
+
+        let open_orders = load_open_orders_accounts(&packed_open_orders).unwrap();
+
+        let mut health_cache = HealthCache::new(active_assets);
+        health_cache
+            .init_vals_with_orders_vec(
+                &mango_group,
+                &mango_cache,
+                &user_mango_account,
+                &open_orders,
+            )
+            .unwrap();
+
+        let health = health_cache.get_health(&mango_group, HealthType::Init);
+        health
+    }
+
+    #[allow(dead_code)]
     pub fn with_mint(&mut self, mint_index: usize) -> MintCookie {
         return self.mints[mint_index];
     }
