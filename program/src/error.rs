@@ -125,6 +125,18 @@ pub enum MangoErrorCode {
     MaxAccountsReached,
     #[error("invalid serum vault")]
     InvalidSerumVault,
+    #[error("MangoErrorCode::InvalidTimeArgument Provided time is invalid")]
+    InvalidTimeArgument,
+    #[error(
+        "MangoErrorCode::MaxOtcOrdersReached The maximum number of OTC orders has been reached"
+    )]
+    MaxOtcOrdersReached,
+    #[error("MangoErrorCode::InvalidOtcOrderStatus OTC order in wrong status")]
+    InvalidOtcOrderStatus,
+    #[error("MangoErrorCode::InvalidOtcOrderIndex OTC order with provided index is invalid")]
+    InvalidOtcOrderIndex,
+    #[error("MangoErrorCode::OtcOrderExpired OTC order expired")]
+    OtcOrderExpired,
 
     #[error("MangoErrorCode::Default Check the source code for more info")] // 40
     Default = u32::MAX_VALUE,

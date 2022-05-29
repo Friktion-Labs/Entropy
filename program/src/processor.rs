@@ -4,8 +4,8 @@ use std::convert::{identity, TryFrom};
 use std::mem::size_of;
 use std::vec;
 
-use std::convert::TryInto;
-
+use std::convert::{From, TryInto};
+use switchboard_aggregator::decimal::SwitchboardDecimal;
 use switchboard_aggregator::AggregatorAccountData;
 
 use anchor_lang::prelude::emit;
@@ -13,11 +13,11 @@ use arrayref::{array_ref, array_refs};
 use bytemuck::{cast, cast_mut, cast_ref};
 use fixed::types::I80F48;
 use fixed_macro::types::I80F48;
-use pyth_client::PriceStatus;
+use pyth_client::{Price, PriceStatus};
 use serum_dex::instruction::NewOrderInstructionV3;
 use serum_dex::state::ToAlignedBytes;
 use solana_program::account_info::AccountInfo;
-use solana_program::clock::Clock;
+use solana_program::clock::{Clock, UnixTimestamp};
 use solana_program::entrypoint::ProgramResult;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::msg;
@@ -49,14 +49,17 @@ use crate::state::PYTH_CONF_FILTER;
 use crate::state::{
     check_open_orders, load_asks_mut, load_bids_mut, load_market_state, load_open_orders,
     load_open_orders_accounts, AdvancedOrderType, AdvancedOrders, AssetType, DataType, HealthCache,
-    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, PerpMarket,
-    PerpMarketCache, PerpMarketInfo, PerpTriggerOrder, PriceCache, ReferrerIdRecord,
-    ReferrerMemory, RootBank, RootBankCache, SpotMarketInfo, TokenInfo, TriggerCondition,
-    UserActiveAssets, ADVANCED_ORDER_FEE, FREE_ORDER_SLOT, INFO_LEN, MAX_ADVANCED_ORDERS,
-    MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS, NEG_ONE_I80F48, ONE_I80F48,
-    QUOTE_INDEX, ZERO_I80F48,
+    HealthType, MangoAccount, MangoCache, MangoGroup, MetaData, NodeBank, OtcOrderStatus,
+    OtcOrders, PerpMarket, PerpMarketCache, PerpMarketInfo, PerpOtcOrder, PerpTriggerOrder,
+    PriceCache, ReferrerIdRecord, ReferrerMemory, RootBank, RootBankCache, SpotMarketInfo,
+    TokenInfo, TriggerCondition, UserActiveAssets, ADVANCED_ORDER_FEE, FREE_ORDER_SLOT, INFO_LEN,
+    MAX_ADVANCED_ORDERS, MAX_NODE_BANKS, MAX_PAIRS, MAX_PERP_OPEN_ORDERS, MAX_TOKENS,
+    NEG_ONE_I80F48, ONE_I80F48, QUOTE_INDEX, ZERO_I80F48,
 };
-use crate::utils::{emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48};
+use crate::utils::{
+    emit_perp_balances, gen_signer_key, gen_signer_seeds, pow_i80f48, serum_fees_mod,
+    OTC_ORDERS_PREFIX,
+};
 
 declare_check_assert_macros!(SourceFileId::Processor);
 
@@ -6273,6 +6276,516 @@ impl Processor {
         Ok(())
     }
 
+    #[inline(never)]
+    fn init_otc_orders(program_id: &Pubkey, accounts: &[AccountInfo]) -> MangoResult {
+        const NUM_FIXED: usize = 6;
+
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, otc_order_owner_ai, rent_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        // Unpack accounts state
+        let _mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let creator_mango_account_state =
+            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+
+        // Check accounts
+        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(
+            otc_order_owner_ai.key,
+            &creator_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            rent_ai.key,
+            &solana_program::sysvar::rent::id(),
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+
+        let (otc_orders_pda, bump_seed) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
+            program_id,
+        );
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
+
+        let rent = Rent::get()?;
+
+        create_pda_account(
+            otc_order_owner_ai,
+            &rent,
+            size_of::<OtcOrders>(),
+            program_id,
+            system_program_ai,
+            otc_orders_pda_ai,
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref(), &[bump_seed]],
+            &[],
+        )?;
+
+        let _ = OtcOrders::load_and_init(
+            otc_orders_pda_ai,
+            program_id,
+            &rent,
+            creator_mango_account_ai.key,
+            bump_seed,
+        )?;
+
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn create_perp_otc_order(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        price: i64,
+        size: u64,
+        expires: UnixTimestamp,
+        side: Side,
+    ) -> MangoResult {
+        const NUM_FIXED: usize = 8;
+
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, counterparty_wallet_ai, perp_market_ai, otc_order_owner_ai, clock_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        // Unpack accounts state
+        let mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let creator_mango_account_state =
+            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+
+        let _perp_market_state =
+            PerpMarket::load_checked(perp_market_ai, program_id, mango_group_ai.key)?;
+
+        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
+
+        // Check accounts
+        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check!(
+            otc_order_owner_ai.key != counterparty_wallet_ai.key,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            otc_order_owner_ai.key,
+            &creator_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            creator_mango_account_ai.key,
+            &otc_orders.creator_account,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            clock_ai.key,
+            &solana_program::sysvar::clock::id(),
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+
+        let (otc_orders_pda, _) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
+            program_id,
+        );
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
+
+        let clock = Clock::get()?;
+
+        check!(clock.unix_timestamp < expires, MangoErrorCode::InvalidTimeArgument)?;
+
+        let perp_account_index = mango_group_state
+            .find_perp_market_index(perp_market_ai.key)
+            .ok_or(throw_err!(MangoErrorCode::InvalidMarket))?;
+
+        // Add perp OTC order
+        let perp_otc_order = PerpOtcOrder::new(
+            side,
+            price,
+            size,
+            clock.unix_timestamp,
+            expires,
+            counterparty_wallet_ai.key.clone(),
+            perp_market_ai.key.clone(),
+            perp_account_index,
+        );
+
+        otc_orders.add_perp_order(perp_otc_order)?;
+
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn cancel_perp_otc_order(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        order_id: usize,
+    ) -> MangoResult {
+        const NUM_FIXED: usize = 5;
+
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, otc_order_owner_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        // Unpack accounts state
+        let _mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let creator_mango_account_state =
+            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+
+        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
+
+        // Check accounts
+        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(
+            otc_order_owner_ai.key,
+            &creator_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            creator_mango_account_ai.key,
+            &otc_orders.creator_account,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+
+        let (otc_orders_pda, _) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
+            program_id,
+        );
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
+
+        otc_orders.cancel_perp_order_by_index(order_id)?;
+
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn cancel_spot_otc_order(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        order_id: usize,
+    ) -> MangoResult {
+        const NUM_FIXED: usize = 5;
+
+        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, otc_order_owner_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        // Unpack accounts state
+        let _mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let creator_mango_account_state =
+            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
+
+        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
+
+        // Check accounts
+        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check_eq!(
+            otc_order_owner_ai.key,
+            &creator_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            creator_mango_account_ai.key,
+            &otc_orders.creator_account,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+
+        let (otc_orders_pda, _) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
+            program_id,
+        );
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
+
+        otc_orders.cancel_spot_order_by_index(order_id)?;
+
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn take_perp_otc_order(
+        program_id: &Pubkey,
+        accounts: &[AccountInfo],
+        order_id: usize,
+        open_orders_count: usize,
+    ) -> MangoResult {
+        const NUM_FIXED: usize = 9;
+
+        let [otc_orders_pda_ai, mango_group_ai, counterparty_mango_account_ai, creator_mango_account_ai, owner_ai, perp_market_ai, mango_cache_ai, _clock_ai, system_program_ai] =
+            array_ref![accounts, 0, NUM_FIXED];
+
+        let open_orders_ais = &accounts[NUM_FIXED..];
+        let (packed_open_orders_counterparty_ais, packed_open_orders_creator_ais): (
+            &[AccountInfo],
+            &[AccountInfo],
+        ) = if open_orders_ais.is_empty() {
+            (&[], &[])
+        } else {
+            let packed_open_orders_counterparty_ais =
+                if open_orders_count == 0 { &[] } else { &open_orders_ais[..open_orders_count] };
+
+            let packed_open_orders_creator_ais = &open_orders_ais[open_orders_count..];
+
+            (packed_open_orders_counterparty_ais, packed_open_orders_creator_ais)
+        };
+
+        // Unpack accounts state
+        let mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
+
+        let mut creator_mango_account_state = MangoAccount::load_mut_checked(
+            creator_mango_account_ai,
+            program_id,
+            mango_group_ai.key,
+        )?;
+
+        let mut counterparty_mango_account_state = MangoAccount::load_mut_checked(
+            counterparty_mango_account_ai,
+            program_id,
+            mango_group_ai.key,
+        )?;
+
+        let mango_cache_state =
+            MangoCache::load_checked(mango_cache_ai, program_id, &mango_group_state)?;
+
+        let mut perp_market_state =
+            PerpMarket::load_mut_checked(perp_market_ai, program_id, mango_group_ai.key)?;
+
+        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
+
+        // Check accounts
+        check!(owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
+        check!(!counterparty_mango_account_state.is_bankrupt, MangoErrorCode::Bankrupt)?;
+        check_eq!(
+            owner_ai.key,
+            &counterparty_mango_account_state.owner,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            creator_mango_account_ai.key,
+            &otc_orders.creator_account,
+            MangoErrorCode::InvalidAccount
+        )?;
+        check_eq!(
+            system_program_ai.key,
+            &solana_program::system_program::id(),
+            MangoErrorCode::InvalidProgramId
+        )?;
+
+        let (otc_orders_pda, _) = Pubkey::find_program_address(
+            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
+            program_id,
+        );
+        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
+
+        let clock = Clock::get()?;
+
+        let order = otc_orders.get_mut_perp_order(order_id)?;
+        check_eq!(&order.counterparty_wallet, owner_ai.key, MangoErrorCode::InvalidAccount)?;
+        check_eq!(&order.perp_market, perp_market_ai.key, MangoErrorCode::InvalidAccount)?;
+        check!(order.expires > clock.unix_timestamp, MangoErrorCode::OtcOrderExpired)?;
+        check_eq!(order.status, OtcOrderStatus::Created, MangoErrorCode::InvalidOtcOrderStatus)?;
+        order.status = OtcOrderStatus::Filled;
+
+        let perp_market_cache = &mango_cache_state.perp_market_cache[order.perp_account_index];
+
+        let counterparty_open_orders_ais = counterparty_mango_account_state
+            .checked_unpack_open_orders(&mango_group_state, packed_open_orders_counterparty_ais)?;
+        let counterparty_open_orders_accounts =
+            load_open_orders_accounts(&counterparty_open_orders_ais)?;
+
+        let creator_open_orders_ais = creator_mango_account_state
+            .checked_unpack_open_orders(&mango_group_state, packed_open_orders_creator_ais)?;
+        let creator_open_orders_accounts = load_open_orders_accounts(&creator_open_orders_ais)?;
+
+        // Main logic
+        let active_assets_counterparty = UserActiveAssets::new(
+            &mango_group_state,
+            &counterparty_mango_account_state,
+            vec![(AssetType::Perp, order.perp_account_index)],
+        );
+
+        let active_assets_creator = UserActiveAssets::new(
+            &mango_group_state,
+            &creator_mango_account_state,
+            vec![(AssetType::Perp, order.perp_account_index)],
+        );
+
+        mango_cache_state.check_valid(
+            &mango_group_state,
+            &active_assets_counterparty,
+            clock.unix_timestamp as u64,
+        )?;
+        mango_cache_state.check_valid(
+            &mango_group_state,
+            &active_assets_creator,
+            clock.unix_timestamp as u64,
+        )?;
+
+        let mut health_cache_counterparty = HealthCache::new(active_assets_counterparty);
+        let mut health_cache_creator = HealthCache::new(active_assets_creator);
+
+        health_cache_counterparty.init_vals_with_orders_vec(
+            &mango_group_state,
+            &mango_cache_state,
+            &counterparty_mango_account_state,
+            &counterparty_open_orders_accounts,
+        )?;
+        health_cache_creator.init_vals_with_orders_vec(
+            &mango_group_state,
+            &mango_cache_state,
+            &creator_mango_account_state,
+            &creator_open_orders_accounts,
+        )?;
+
+        let pre_health_counterparty =
+            health_cache_counterparty.get_health(&mango_group_state, HealthType::Init);
+        let pre_health_creator =
+            health_cache_creator.get_health(&mango_group_state, HealthType::Init);
+
+        // Update the being_liquidated flag
+        if counterparty_mango_account_state.being_liquidated {
+            if pre_health_counterparty >= ZERO_I80F48 {
+                counterparty_mango_account_state.being_liquidated = false;
+            } else {
+                return Err(throw_err!(MangoErrorCode::BeingLiquidated));
+            }
+        }
+
+        // Update the being_liquidated flag
+        if creator_mango_account_state.being_liquidated {
+            if pre_health_creator >= ZERO_I80F48 {
+                creator_mango_account_state.being_liquidated = false;
+            } else {
+                return Err(throw_err!(MangoErrorCode::BeingLiquidated));
+            }
+        }
+
+        // This means health must only go up
+        let health_up_only_counterparty = pre_health_counterparty < ZERO_I80F48;
+
+        // This means health must only go up
+        let health_up_only_creator = pre_health_creator < ZERO_I80F48;
+
+        let match_qty: i64 =
+            order.size.try_into().map_err(|_| throw_err!(MangoErrorCode::MathError))?;
+        let match_quote =
+            match_qty.checked_mul(order.price).ok_or(throw_err!(MangoErrorCode::MathError))?;
+
+        // Negative `match_qty`, positive `match_quote` for selling account
+        // Positive `match_qty`, negative `match_quote` for buying account
+
+        let (match_qty_creator, match_quote_creator) = if order.creator_side == Side::Bid {
+            (match_qty, -match_quote)
+        } else {
+            (-match_qty, match_quote)
+        };
+
+        counterparty_mango_account_state.perp_accounts[order.perp_account_index]
+            .add_taker_trade(match_qty_creator * -1, match_quote_creator * -1);
+        creator_mango_account_state.perp_accounts[order.perp_account_index]
+            .add_taker_trade(match_qty_creator, match_quote_creator);
+
+        // Rebase counterparty position
+        let counterparty_fill = FillEvent::new(
+            if order.creator_side == Side::Ask { Side::Bid } else { Side::Ask },
+            0,
+            false,
+            0,
+            0,
+            creator_mango_account_state.owner,
+            0,
+            0,
+            I80F48!(0),
+            0,
+            0,
+            *owner_ai.key,
+            0,
+            0,
+            I80F48!(0),
+            order.price,
+            match_qty,
+            0,
+        );
+        counterparty_mango_account_state.execute_taker(
+            order.perp_account_index,
+            &mut perp_market_state,
+            perp_market_cache,
+            &counterparty_fill,
+        )?;
+
+        // Rebase creator position
+        let creator_fill = FillEvent::new(
+            order.creator_side,
+            0,
+            false,
+            0,
+            0,
+            *owner_ai.key,
+            0,
+            0,
+            I80F48!(0),
+            0,
+            0,
+            creator_mango_account_state.owner,
+            0,
+            0,
+            I80F48!(0),
+            order.price,
+            match_qty,
+            0,
+        );
+        creator_mango_account_state.execute_taker(
+            order.perp_account_index,
+            &mut perp_market_state,
+            perp_market_cache,
+            &creator_fill,
+        )?;
+
+        health_cache_counterparty.update_perp_val(
+            &mango_group_state,
+            &mango_cache_state,
+            &counterparty_mango_account_state,
+            order.perp_account_index,
+        )?;
+        health_cache_creator.update_perp_val(
+            &mango_group_state,
+            &mango_cache_state,
+            &creator_mango_account_state,
+            order.perp_account_index,
+        )?;
+
+        let post_health_counterparty =
+            health_cache_counterparty.get_health(&mango_group_state, HealthType::Init);
+        let post_health_creator =
+            health_cache_creator.get_health(&mango_group_state, HealthType::Init);
+
+        check!(
+            post_health_counterparty >= ZERO_I80F48
+                || (health_up_only_counterparty
+                    && post_health_counterparty >= pre_health_counterparty),
+            MangoErrorCode::InsufficientFunds
+        )?;
+        check!(
+            post_health_creator >= ZERO_I80F48
+                || (health_up_only_creator && post_health_creator >= pre_health_creator),
+            MangoErrorCode::InsufficientFunds
+        )
+    }
+
     pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> MangoResult {
         let instruction =
             MangoInstruction::unpack(data).ok_or(ProgramError::InvalidInstructionData)?;
@@ -6796,6 +7309,26 @@ impl Processor {
             MangoInstruction::DontSquare { dont_square } => {
                 msg!("Mango: DontSquare");
                 Self::change_dont_square(program_id, accounts, dont_square)
+            }
+            MangoInstruction::InitOtcOrders => {
+                msg!("Mango: InitOtcOrders");
+                Self::init_otc_orders(program_id, accounts)
+            }
+            MangoInstruction::CreatePerpOtcOrder { price, size, expires, side } => {
+                msg!("Mango: CreatePerpOtcOrder");
+                Self::create_perp_otc_order(program_id, accounts, price, size, expires, side)
+            }
+            MangoInstruction::CancelPerpOtcOrder { order_id } => {
+                msg!("Mango: CancelPerpOtcOrder");
+                Self::cancel_perp_otc_order(program_id, accounts, order_id)
+            }
+            MangoInstruction::CancelSpotOtcOrder { order_id } => {
+                msg!("Mango: CancelSpotOtcOrder");
+                Self::cancel_spot_otc_order(program_id, accounts, order_id)
+            }
+            MangoInstruction::TakePerpOtcOrder { order_id, open_orders_count } => {
+                msg!("Mango: TakePerpOtcOrder");
+                Self::take_perp_otc_order(program_id, accounts, order_id, open_orders_count)
             }
         }
     }

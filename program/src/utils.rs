@@ -11,6 +11,10 @@ use solana_program::pubkey::Pubkey;
 use std::cell::RefMut;
 use std::mem::size_of;
 
+pub const OTC_ORDERS_PREFIX: &str = "otc_orders";
+pub const MAX_PERP_OTC_ORDERS: usize = 10;
+pub const MAX_SPOT_OTC_ORDERS: usize = 10;
+
 pub mod serum_fees_mod {
     use solana_program::declare_id;
 

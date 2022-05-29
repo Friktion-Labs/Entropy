@@ -3,7 +3,7 @@ use fixed::types::I80F48;
 use mango_common::Loadable;
 use mango_macro::{Loadable, Pod};
 use solana_program::{account_info::AccountInfo, pubkey::Pubkey, rent::Rent};
-use std::{cell::RefMut, mem::size_of};
+use std::{cell::RefMut, mem::size_of, str::FromStr};
 
 use crate::error::{check_assert, MangoErrorCode, MangoResult, SourceFileId};
 
