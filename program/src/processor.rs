@@ -4,6 +4,8 @@ use std::convert::{identity, TryFrom};
 use std::mem::size_of;
 use std::vec;
 
+use std::convert::{From, TryInto};
+
 use anchor_lang::prelude::emit;
 use arrayref::{array_ref, array_refs};
 use bytemuck::{cast, cast_mut, cast_ref};
