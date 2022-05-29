@@ -1,6 +1,5 @@
 use anchor_lang::prelude::AccountMeta;
 use fixed::types::I80F48;
-
 use solana_program::instruction::Instruction;
 use std::mem::size_of;
 use std::num::NonZeroU64;
