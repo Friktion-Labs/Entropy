@@ -1,13 +1,16 @@
 use crate::matching::{OrderType, Side};
 use crate::state::{AssetType, INFO_LEN};
 use crate::state::{TriggerCondition, MAX_PAIRS};
+use crate::utils;
 use arrayref::{array_ref, array_refs};
 use fixed::types::I80F48;
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
+use solana_program::clock::UnixTimestamp;
 use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::program_error::ProgramError;
 use solana_program::pubkey::Pubkey;
+use solana_program::{system_program, sysvar};
 use std::convert::{TryFrom, TryInto};
 use std::num::NonZeroU64;
 
@@ -1061,6 +1064,83 @@ pub enum MangoInstruction {
     DontSquare {
         dont_square: bool,
     },
+
+    /// Initialize OTC orders account for user (`state::OtcOrders`).
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Uninitialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` Rent sysvar.
+    /// 5. `[]` System program.
+    InitOtcOrders,
+
+    /// Creates perp OTC order.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[]` Counterparty wallet.
+    /// 4. `[]` Perp market.
+    /// 5. `[signer]` Order owner wallet.
+    /// 6. `[]` Clock sysvar.
+    /// 7. `[]` System program.
+    CreatePerpOtcOrder {
+        price: i64,
+        size: u64,
+        expires: UnixTimestamp,
+        side: Side,
+    },
+
+    /// Cancel perp OTC order.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` System program.
+    CancelPerpOtcOrder {
+        order_id: usize,
+    },
+
+    /// Cancel spot OTC order.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` System program.
+    CancelSpotOtcOrder {
+        order_id: usize,
+    },
+
+    /// Take perp OTC order.
+    ///
+    /// Accounts:
+    ///
+    /// 0.  `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1.  `[]` Mango group.
+    /// 2.  `[writable]` Mango account of counterparty.
+    /// 3.  `[writable]` Mango account of creator.
+    /// 4.  `[signer]` Counterparty wallet.
+    /// 5.  `[writable]` Perp market.
+    /// 6.  `[]` Mango cache.
+    /// 7.  `[]` Clock sysvar.
+    /// 8.  `[]` System program.
+    /// 9.  `[]` Packed counterparty open orders...
+    /// 10. `[]` Packed creator open orders...
+    TakePerpOtcOrder {
+        order_id: usize,
+        open_orders_count: usize,
+    },
 }
 
 impl MangoInstruction {
@@ -1557,6 +1637,33 @@ impl MangoInstruction {
             66 => {
                 let data_arr = array_ref![data, 0, 1];
                 MangoInstruction::DontSquare { dont_square: data_arr[0] != 0 }
+            }
+            67 => MangoInstruction::InitOtcOrders,
+            68 => {
+                let data_arr = array_ref![data, 0, 25];
+                let (price, size, expires, side) = array_refs![data_arr, 8, 8, 8, 1];
+                MangoInstruction::CreatePerpOtcOrder {
+                    price: i64::from_le_bytes(*price),
+                    size: u64::from_le_bytes(*size),
+                    expires: i64::from_le_bytes(*expires),
+                    side: Side::try_from_primitive(side[0]).ok()?,
+                }
+            }
+            69 => {
+                let data_arr = array_ref![data, 0, 8];
+                MangoInstruction::CancelPerpOtcOrder { order_id: usize::from_le_bytes(*data_arr) }
+            }
+            70 => {
+                let data_arr = array_ref![data, 0, 8];
+                MangoInstruction::CancelSpotOtcOrder { order_id: usize::from_le_bytes(*data_arr) }
+            }
+            71 => {
+                let data_arr = array_ref![data, 0, 16];
+                let (order_id, open_orders_count) = array_refs![data_arr, 8, 8];
+                MangoInstruction::TakePerpOtcOrder {
+                    order_id: usize::from_le_bytes(*order_id),
+                    open_orders_count: usize::from_le_bytes(*open_orders_count),
+                }
             }
             _ => {
                 return None;
@@ -2869,6 +2976,133 @@ pub fn change_spot_market_params(
         optimal_rate,
         max_rate,
         version,
+    };
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn init_otc_orders(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new_readonly(*mango_account_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new_readonly(sysvar::rent::id(), false),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instr = MangoInstruction::InitOtcOrders {};
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn create_perp_otc_order(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    counterparty_pk: &Pubkey,
+    perp_market_pk: &Pubkey,
+    owner_pk: &Pubkey,
+    price: i64,
+    size: u64,
+    expires: UnixTimestamp,
+    side: Side,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new_readonly(*mango_account_pk, false),
+        AccountMeta::new_readonly(*counterparty_pk, false),
+        AccountMeta::new_readonly(*perp_market_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instr = MangoInstruction::CreatePerpOtcOrder { price, size, expires, side };
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn cancel_perp_otc_order(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+    order_id: usize,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new_readonly(*mango_account_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instr = MangoInstruction::CancelPerpOtcOrder { order_id };
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn take_perp_otc_order(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    counterparty_mango_account_pk: &Pubkey,
+    creator_mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+    perp_market_pk: &Pubkey,
+    mango_cache_pk: &Pubkey,
+    packed_counterparty_open_orders_pks: &Vec<Pubkey>,
+    packed_creator_open_orders_pks: &Vec<Pubkey>,
+    order_id: usize,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let mut accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new(*counterparty_mango_account_pk, false),
+        AccountMeta::new(*creator_mango_account_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new(*perp_market_pk, false),
+        AccountMeta::new_readonly(*mango_cache_pk, false),
+        AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    packed_counterparty_open_orders_pks
+        .iter()
+        .for_each(|pk| accounts.push(AccountMeta::new_readonly(*pk, false)));
+    packed_creator_open_orders_pks
+        .iter()
+        .for_each(|pk| accounts.push(AccountMeta::new_readonly(*pk, false)));
+
+    let instr = MangoInstruction::TakePerpOtcOrder {
+        order_id,
+        open_orders_count: packed_counterparty_open_orders_pks.len(),
     };
     let data = instr.pack();
     Ok(Instruction { program_id: *program_id, accounts, data })
