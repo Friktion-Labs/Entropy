@@ -1742,6 +1742,7 @@ fn unpack_dex_new_order_v3(
         order_type,
         client_order_id,
         limit,
+        max_ts: i64::MAX,
     })
 }
 

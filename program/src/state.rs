@@ -3189,7 +3189,7 @@ pub fn load_market_state<'a>(
             from_bytes_mut(mid)
         });
 
-    state.check_flags()?;
+    state.check_flags(false)?;
     Ok(state)
 }
 
