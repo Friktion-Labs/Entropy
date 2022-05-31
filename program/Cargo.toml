@@ -37,7 +37,7 @@ switchboard-aggregator = "0.1.7"
 switchboard-program = ">=0.2.0"
 switchboard-utils = ">=0.1.36"
 
-anchor-lang = "0.22.1"
+anchor-lang = "0.24.2"
 
 [dev-dependencies]
 solana-sdk = ">=1.9.0, <1.10.0"
