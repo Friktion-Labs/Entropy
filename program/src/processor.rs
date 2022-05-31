@@ -5,8 +5,6 @@ use std::mem::size_of;
 use std::vec;
 
 use std::convert::{From, TryInto};
-use switchboard_aggregator::decimal::SwitchboardDecimal;
-use switchboard_aggregator::AggregatorAccountData;
 
 use anchor_lang::prelude::emit;
 use arrayref::{array_ref, array_refs};
@@ -538,9 +536,6 @@ impl Processor {
             }
             OracleType::Switchboard => {
                 // msg!("OracleType::Switchboard");
-            }
-            OracleType::SwitchboardV2 => {
-                // msg!("OracleType::SwitchboardV2");
             }
             OracleType::Stub | OracleType::Unknown => {
                 let rent = Rent::get()?;
@@ -7479,16 +7474,6 @@ fn invoke_transfer<'a>(
 }
 
 #[inline(never)]
-fn get_switchboard_value(oracle_ai: &AccountInfo) -> MangoResult<I80F48> {
-    let switchboard_decimal = AggregatorAccountData::new(oracle_ai)?.get_result()?;
-    let temp_decimal: f64 = switchboard_decimal.try_into().unwrap();
-
-    // .try_into().unwrap();
-    let value = I80F48::from_num(temp_decimal);
-    Ok(value)
-}
-
-#[inline(never)]
 fn read_oracle(
     mango_group: &MangoGroup,
     token_index: usize,
@@ -7496,14 +7481,6 @@ fn read_oracle(
 ) -> MangoResult<I80F48> {
     let quote_decimals = mango_group.tokens[QUOTE_INDEX].decimals as i32;
     let base_decimals = mango_group.tokens[token_index].decimals as i32;
-
-    //   match mango_group.tokens[token_index].is_empty() {
-    //     true => {
-    //         msg!("token index was empty");
-    //         return 6
-    //     },
-    //     false => mango_group.tokens[token_index].decimals as i32
-    // };
 
     let oracle_type = determine_oracle_type(oracle_ai);
 
@@ -7561,22 +7538,6 @@ fn read_oracle(
                 }
 
                 let decimals = quote_decimals.checked_sub(base_decimals).unwrap();
-                if decimals < 0 {
-                    let decimal_adj = I80F48::from_num(10u64.pow(decimals.abs() as u32));
-                    value.checked_div(decimal_adj).unwrap()
-                } else if decimals > 0 {
-                    let decimal_adj = I80F48::from_num(10u64.pow(decimals.abs() as u32));
-                    value.checked_mul(decimal_adj).unwrap()
-                } else {
-                    value
-                }
-            }
-            OracleType::SwitchboardV2 => {
-                msg!("switchboard V2");
-                let value = get_switchboard_value(oracle_ai).unwrap();
-
-                let decimals = quote_decimals.checked_sub(base_decimals).unwrap();
-
                 if decimals < 0 {
                     let decimal_adj = I80F48::from_num(10u64.pow(decimals.abs() as u32));
                     value.checked_div(decimal_adj).unwrap()

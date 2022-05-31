@@ -32,8 +32,6 @@ mango-logs = { path = "../mango-logs", features=["no-entrypoint"] }
 
 pyth-client = {version = ">=0.5.0", features = ["no-entrypoint"]}
 
-switchboard-aggregator = "0.1.7"
-
 switchboard-program = ">=0.2.0"
 switchboard-utils = ">=0.1.36"
 

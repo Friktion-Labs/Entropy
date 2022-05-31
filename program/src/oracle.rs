@@ -16,7 +16,6 @@ pub enum OracleType {
     Stub,
     Pyth,
     Switchboard,
-    SwitchboardV2,
     Unknown,
 }
 
@@ -71,9 +70,6 @@ pub fn determine_oracle_type(account: &AccountInfo) -> OracleType {
     } else if magic == STUB_MAGIC {
         OracleType::Stub
     }
-    //  else if account.owner == &Pubkey::from_str("2TfB33aLaneQb5TNVwyDz3jSZXS6jdW2ARw1Dgf84XCG").unwrap() {
-    //     return OracleType::SwitchboardV2;
-    // }
     else {
         OracleType::Unknown
     }
