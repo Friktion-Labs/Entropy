@@ -1,4 +1,4 @@
-use crate::matching::{OrderType, Side};
+use crate::matching::{ExpiryType, OrderType, Side};
 use crate::state::{AssetType, INFO_LEN};
 use crate::state::{TriggerCondition, MAX_PAIRS};
 use crate::utils;
@@ -58,9 +58,9 @@ pub enum MangoInstruction {
     /// 0. `[]` mango_group_ai - MangoGroup that this mango account is for
     /// 1. `[writable]` mango_account_ai - the mango account for this user
     /// 2. `[signer]` owner_ai - Solana account of owner of the mango account
-    /// 3. `[]` mango_cache_ai - MangoCache
-    /// 4. `[]` root_bank_ai - RootBank owned by MangoGroup
-    /// 5. `[writable]` node_bank_ai - NodeBank owned by RootBank
+    /// 3. `[writable]` mango_cache_ai - MangoCache
+    /// 4. `[writable]` root_bank_ai - RootBank of token being deposited
+    /// 5. `[writable]` node_bank_ai - NodeBank
     /// 6. `[writable]` vault_ai - TokenAccount owned by MangoGroup
     /// 7. `[]` token_prog_ai - acc pointed to by SPL token program id
     /// 8. `[writable]` owner_token_account_ai - TokenAccount owned by user which will be sending the funds
@@ -1015,9 +1015,15 @@ pub enum MangoInstruction {
 
         /// Timestamp of when order expires
         ///
-        /// Send 0 if you want the order to never expire.
-        /// Timestamps in the past mean the instruction is skipped.
-        /// Timestamps in the future are reduced to now + 255s.
+        /// If expiry_type is Absolute:
+        /// - Send 0 if you want the order to never expire.
+        /// - Timestamps in the past mean the instruction is skipped.
+        /// - Timestamps in the future are reduced to now + 255s.
+        ///
+        /// If expiry_type is Relative:
+        /// - Must be between 1 and 255.
+        /// - The order will expire when the block timestamp has reached or exceeded
+        ///   the current block timestamp plus that number of seconds.
         expiry_timestamp: u64,
 
         side: Side,
@@ -1032,6 +1038,9 @@ pub enum MangoInstruction {
         /// Use this to limit compute used during order matching.
         /// When the limit is reached, processing stops and the instruction succeeds.
         limit: u8,
+
+        /// Can be 0 -> Absolute or 1 -> Relative; see expiry_timestamp
+        expiry_type: ExpiryType,
     },
 
     /// Cancels all the spot orders pending for a mango account
@@ -1212,8 +1221,7 @@ impl MangoInstruction {
             7 => MangoInstruction::CachePrices,
             8 => MangoInstruction::CacheRootBanks,
             9 => {
-                let data_arr = array_ref![data, 0, 46];
-                let order = unpack_dex_new_order_v3(data_arr)?;
+                let order = unpack_dex_new_order_v3(data)?;
                 MangoInstruction::PlaceSpotOrder { order }
             }
             10 => MangoInstruction::AddOracle,
@@ -1426,8 +1434,7 @@ impl MangoInstruction {
 
             40 => MangoInstruction::ForceSettleQuotePositions,
             41 => {
-                let data_arr = array_ref![data, 0, 46];
-                let order = unpack_dex_new_order_v3(data_arr)?;
+                let order = unpack_dex_new_order_v3(data)?;
                 MangoInstruction::PlaceSpotOrder2 { order }
             }
 
@@ -1617,6 +1624,7 @@ impl MangoInstruction {
                     reduce_only,
                     limit,
                 ) = array_refs![data_arr, 8, 8, 8, 8, 8, 1, 1, 1, 1];
+                let expiry_type_byte = if data.len() > 44 { data[44] } else { 0 };
                 MangoInstruction::PlacePerpOrder2 {
                     price: i64::from_le_bytes(*price),
                     max_base_quantity: i64::from_le_bytes(*max_base_quantity),
@@ -1627,6 +1635,7 @@ impl MangoInstruction {
                     order_type: OrderType::try_from_primitive(order_type[0]).ok()?,
                     reduce_only: reduce_only[0] != 0,
                     limit: u8::from_le_bytes(*limit),
+                    expiry_type: ExpiryType::try_from_primitive(expiry_type_byte).ok()?,
                 }
             }
             65 => {
@@ -1700,9 +1709,10 @@ fn unpack_u64_opt(data: &[u8; 9]) -> Option<u64> {
     }
 }
 
-fn unpack_dex_new_order_v3(
-    data: &[u8; 46],
-) -> Option<serum_dex::instruction::NewOrderInstructionV3> {
+fn unpack_dex_new_order_v3(data: &[u8]) -> Option<serum_dex::instruction::NewOrderInstructionV3> {
+    let max_ts =
+        if data.len() == 54 { i64::from_le_bytes(*array_ref![data, 46, 8]) } else { i64::MAX };
+    let data = array_ref![data, 0, 46];
     let (
         &side_arr,
         &price_arr,
@@ -1742,6 +1752,7 @@ fn unpack_dex_new_order_v3(
         order_type,
         client_order_id,
         limit,
+        max_ts,
     })
 }
 
@@ -1885,6 +1896,7 @@ pub fn upgrade_mango_account_v0_v1(
     Ok(Instruction { program_id: *program_id, accounts, data })
 }
 
+/// Note: this instruction will not work if/when a new node bank is added
 pub fn deposit(
     program_id: &Pubkey,
     mango_group_pk: &Pubkey,
@@ -1902,8 +1914,8 @@ pub fn deposit(
         AccountMeta::new_readonly(*mango_group_pk, false),
         AccountMeta::new(*mango_account_pk, false),
         AccountMeta::new_readonly(*owner_pk, true),
-        AccountMeta::new_readonly(*mango_cache_pk, false),
-        AccountMeta::new_readonly(*root_bank_pk, false),
+        AccountMeta::new(*mango_cache_pk, false),
+        AccountMeta::new(*root_bank_pk, false),
         AccountMeta::new(*node_bank_pk, false),
         AccountMeta::new(*vault_pk, false),
         AccountMeta::new_readonly(spl_token::ID, false),
@@ -2078,6 +2090,7 @@ pub fn place_perp_order2(
     reduce_only: bool,
     expiry_timestamp: Option<u64>, // Send 0 if you want to ignore time in force
     limit: u8,                     // maximum number of FillEvents before terminating
+    expiry_type: ExpiryType,
 ) -> Result<Instruction, ProgramError> {
     let mut accounts = vec![
         AccountMeta::new_readonly(*mango_group_pk, false),
@@ -2103,6 +2116,7 @@ pub fn place_perp_order2(
         reduce_only,
         expiry_timestamp: expiry_timestamp.unwrap_or(0),
         limit,
+        expiry_type,
     };
     let data = instr.pack();
 
@@ -2733,6 +2747,72 @@ pub fn place_spot_order(
     }));
 
     let instr = MangoInstruction::PlaceSpotOrder { order };
+    let data = instr.pack();
+
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn place_spot_order2(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+    mango_cache_pk: &Pubkey,
+    dex_prog_pk: &Pubkey,
+    spot_market_pk: &Pubkey,
+    bids_pk: &Pubkey,
+    asks_pk: &Pubkey,
+    dex_request_queue_pk: &Pubkey,
+    dex_event_queue_pk: &Pubkey,
+    dex_base_pk: &Pubkey,
+    dex_quote_pk: &Pubkey,
+    base_root_bank_pk: &Pubkey,
+    base_node_bank_pk: &Pubkey,
+    base_vault_pk: &Pubkey,
+    quote_root_bank_pk: &Pubkey,
+    quote_node_bank_pk: &Pubkey,
+    quote_vault_pk: &Pubkey,
+    signer_pk: &Pubkey,
+    dex_signer_pk: &Pubkey,
+    msrm_or_srm_vault_pk: &Pubkey,
+    open_orders_pks: &[Pubkey], // caller only need to pass in open_orders_pks that are in margin basket
+    affected_market_open_orders_index: usize, // used to determine which of the open orders accounts should be passed in write
+    order: serum_dex::instruction::NewOrderInstructionV3,
+) -> Result<Instruction, ProgramError> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new(*mango_account_pk, false),
+        AccountMeta::new_readonly(*owner_pk, true),
+        AccountMeta::new_readonly(*mango_cache_pk, false),
+        AccountMeta::new_readonly(*dex_prog_pk, false),
+        AccountMeta::new(*spot_market_pk, false),
+        AccountMeta::new(*bids_pk, false),
+        AccountMeta::new(*asks_pk, false),
+        AccountMeta::new(*dex_request_queue_pk, false),
+        AccountMeta::new(*dex_event_queue_pk, false),
+        AccountMeta::new(*dex_base_pk, false),
+        AccountMeta::new(*dex_quote_pk, false),
+        AccountMeta::new_readonly(*base_root_bank_pk, false),
+        AccountMeta::new(*base_node_bank_pk, false),
+        AccountMeta::new(*base_vault_pk, false),
+        AccountMeta::new_readonly(*quote_root_bank_pk, false),
+        AccountMeta::new(*quote_node_bank_pk, false),
+        AccountMeta::new(*quote_vault_pk, false),
+        AccountMeta::new_readonly(spl_token::ID, false),
+        AccountMeta::new_readonly(*signer_pk, false),
+        AccountMeta::new_readonly(*dex_signer_pk, false),
+        AccountMeta::new_readonly(*msrm_or_srm_vault_pk, false),
+    ];
+
+    accounts.extend(open_orders_pks.iter().enumerate().map(|(i, pk)| {
+        if i == affected_market_open_orders_index {
+            AccountMeta::new(*pk, false)
+        } else {
+            AccountMeta::new_readonly(*pk, false)
+        }
+    }));
+
+    let instr = MangoInstruction::PlaceSpotOrder2 { order };
     let data = instr.pack();
 
     Ok(Instruction { program_id: *program_id, accounts, data })

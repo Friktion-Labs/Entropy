@@ -16,7 +16,6 @@ pub enum OracleType {
     Stub,
     Pyth,
     Switchboard,
-    SwitchboardV2,
     Unknown,
 }
 

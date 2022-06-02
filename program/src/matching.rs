@@ -335,6 +335,24 @@ pub enum Side {
     Ask = 1,
 }
 
+#[derive(
+    Eq, PartialEq, Copy, Clone, TryFromPrimitive, IntoPrimitive, Debug, Serialize, Deserialize,
+)]
+#[repr(u8)]
+#[serde(into = "u8", try_from = "u8")]
+pub enum ExpiryType {
+    /// Expire at exactly the given block time.
+    ///
+    /// Orders with an expiry in the past are ignored. Expiry more than 255s in the future
+    /// is clamped to 255 seconds.
+    Absolute,
+
+    /// Expire a number of block time seconds in the future.
+    ///
+    /// Must be between 1 and 255.
+    Relative,
+}
+
 pub const MAX_BOOK_NODES: usize = 1024; // NOTE: this cannot be larger than u32::MAX
 
 /// A binary tree on AnyNode::key()
@@ -1263,6 +1281,11 @@ impl<'a> Book<'a> {
             }
 
             let max_match_by_quote = rem_quote_quantity / best_ask_price;
+            if max_match_by_quote == 0 {
+                // Done matching because we reached max quote quantity
+                post_allowed = false;
+                break;
+            }
             let match_quantity = rem_base_quantity.min(best_ask.quantity).min(max_match_by_quote);
             let done = match_quantity == max_match_by_quote || match_quantity == rem_base_quantity;
 
@@ -1518,6 +1541,11 @@ impl<'a> Book<'a> {
             }
 
             let max_match_by_quote = rem_quote_quantity / best_bid_price;
+            if max_match_by_quote == 0 {
+                // Done matching because we reached max quote quantity
+                post_allowed = false;
+                break;
+            }
             let match_quantity = rem_base_quantity.min(best_bid.quantity).min(max_match_by_quote);
             let done = match_quantity == max_match_by_quote || match_quantity == rem_base_quantity;
 

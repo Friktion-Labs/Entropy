@@ -1,3 +1,4 @@
+#![cfg(feature = "test-bpf")]
 // Tests related to depositing into mango group
 mod program_test;
 
