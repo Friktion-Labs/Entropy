@@ -2264,7 +2264,7 @@ impl PerpMarket {
         let ask = book.get_impact_price(Side::Ask, IMPACT_QUANTITY, now_ts);
 
         const MAX_FUNDING: I80F48 = I80F48!(0.0075);
-        const MIN_FUNDING: I80F48 = I80F48!(-0.05);
+        const MIN_FUNDING: I80F48 = I80F48!(-0.0075);
 
         let diff = match (bid, ask) {
             (Some(bid), Some(ask)) => {
@@ -2286,9 +2286,10 @@ impl PerpMarket {
         let funding_delta: I80F48 = index_price
             .checked_mul(diff)
             .unwrap()
-            .checked_mul(I80F48::from_num(self.base_lot_size))
-            .unwrap()
             .checked_mul(time_factor)
+            .unwrap()
+            .clamp(MIN_FUNDING, MAX_FUNDING)
+            .checked_mul(I80F48::from_num(self.base_lot_size))
             .unwrap();
 
         self.long_funding += funding_delta;
