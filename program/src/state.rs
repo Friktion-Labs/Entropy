@@ -2263,7 +2263,7 @@ impl PerpMarket {
         let bid = book.get_impact_price(Side::Bid, IMPACT_QUANTITY, now_ts);
         let ask = book.get_impact_price(Side::Ask, IMPACT_QUANTITY, now_ts);
 
-        const MAX_FUNDING: I80F48 = I80F48!(0.05);
+        const MAX_FUNDING: I80F48 = I80F48!(0.0075);
         const MIN_FUNDING: I80F48 = I80F48!(-0.05);
 
         let diff = match (bid, ask) {
