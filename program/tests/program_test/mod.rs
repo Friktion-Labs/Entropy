@@ -5,6 +5,7 @@ use bincode::deserialize;
 use fixed::types::I80F48;
 use serum_dex::instruction::NewOrderInstructionV3;
 use solana_program::entrypoint::ProgramResult;
+use solana_program::instruction::InstructionError;
 use solana_program::{
     account_info::AccountInfo,
     clock::{Clock, UnixTimestamp},
@@ -16,6 +17,10 @@ use solana_program::{
 };
 use solana_program_test::*;
 use solana_sdk::commitment_config::CommitmentLevel;
+<<<<<<< HEAD
+=======
+use solana_sdk::transaction::TransactionError;
+>>>>>>> 5e3b8ca (fix tests and update serum fixture)
 use solana_sdk::{
     account::ReadableAccount,
     instruction::Instruction,
@@ -1948,6 +1953,156 @@ impl MangoProgramTest {
         mango_group_cookie.mango_accounts[liqor_index].mango_account =
             self.load_account::<MangoAccount>(liqor_mango_account_pk).await;
     }
+
+    #[allow(dead_code)]
+    pub async fn init_otc_orders(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+    ) -> (Pubkey, u8) {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        let (otc_orders_pk, bump) = Pubkey::find_program_address(
+            &[mango::utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+            &self.mango_program_id,
+        );
+
+        self.process_transaction(
+            &[init_otc_orders(&self.mango_program_id, mango_group_pk, mango_account_pk, &owner_pk)
+                .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+        .unwrap();
+
+        (otc_orders_pk, bump)
+    }
+
+    #[allow(dead_code)]
+    pub async fn create_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        counterparty_pk: &Pubkey,
+        perp_market_pk: &Pubkey,
+        user_index: usize,
+        price: i64,
+        size: u64,
+        expires: UnixTimestamp,
+        side: Side,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[create_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                counterparty_pk,
+                perp_market_pk,
+                &owner_pk,
+                price,
+                size,
+                expires,
+                side,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn cancel_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+        order_id: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[cancel_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                &owner_pk,
+                order_id,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn take_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        counterparty_mango_account_pk: &Pubkey,
+        creator_mango_account_pk: &Pubkey,
+        perp_market_pk: &Pubkey,
+        mango_cache_pk: &Pubkey,
+        packed_counterparty_open_orders_pks: &Vec<Pubkey>,
+        packed_creator_open_orders_pks: &Vec<Pubkey>,
+        user_index: usize,
+        order_id: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[take_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                counterparty_mango_account_pk,
+                creator_mango_account_pk,
+                &owner_pk,
+                perp_market_pk,
+                mango_cache_pk,
+                packed_counterparty_open_orders_pks,
+                packed_creator_open_orders_pks,
+                order_id,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn with_health<'a>(
+        &mut self,
+        mango_group: &MangoGroup,
+        user_mango_account: &MangoAccount,
+        active_assets: UserActiveAssets,
+        open_orders: &'a Vec<AccountInfo<'a>>,
+    ) -> I80F48 {
+        let mango_cache = self.load_account::<MangoCache>(mango_group.mango_cache).await;
+
+        let packed_open_orders =
+            user_mango_account.checked_unpack_open_orders(mango_group, open_orders).unwrap();
+
+        let open_orders = load_open_orders_accounts(&packed_open_orders).unwrap();
+
+        let mut health_cache = HealthCache::new(active_assets);
+        health_cache
+            .init_vals_with_orders_vec(
+                &mango_group,
+                &mango_cache,
+                &user_mango_account,
+                &open_orders,
+            )
+            .unwrap();
+
+        let health = health_cache.get_health(&mango_group, HealthType::Init);
+        health
+    }
 }
 
 fn process_serum_instruction(
@@ -1956,4 +2111,16 @@ fn process_serum_instruction(
     instruction_data: &[u8],
 ) -> ProgramResult {
     Ok(serum_dex::state::State::process(program_id, accounts, instruction_data)?)
+}
+pub fn get_error_code(error: TransportError) -> Option<u32> {
+    match error {
+        TransportError::TransactionError(error) => match error {
+            TransactionError::InstructionError(_, error) => match error {
+                InstructionError::Custom(error_code) => Some(error_code),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
 }

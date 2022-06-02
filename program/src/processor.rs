@@ -1788,6 +1788,7 @@ impl Processor {
         // If not post_allowed, then pre_locked may not increase
         let (post_allowed, pre_locked) = {
             let open_orders = load_open_orders(&open_orders_ais[market_index])?;
+            msg!("native price = {:?}, oracle price = {:?}", native_price, oracle_price);
             match order_side {
                 serum_dex::matching::Side::Bid => (
                     native_price.checked_div(oracle_price).unwrap() <= info.maint_liab_weight,
@@ -1849,6 +1850,7 @@ impl Processor {
                 open_orders.native_coin_total - open_orders.native_coin_free
             }
         };
+        msg!("pre locked = {:?}, post locked = {:?}", pre_locked, post_locked);
         check!(post_allowed || post_locked <= pre_locked, MangoErrorCode::InvalidParam)?;
         let (post_base, post_quote) = {
             (
