@@ -91,8 +91,7 @@ async fn test_delegate() {
     .unwrap_err();
 
     // Step5: Reset delegate
-    reset_delegate_scenario(&mut test, &mut mango_group_cookie, user_index, delegate_user_index)
-        .await;
+    reset_delegate_scenario(&mut test, &mut mango_group_cookie, user_index).await;
 
     // Step6: Test placing orders again, should fail
     place_spot_order_scenario_with_delegate(&mut test, &mut mango_group_cookie, &user_spot_orders)

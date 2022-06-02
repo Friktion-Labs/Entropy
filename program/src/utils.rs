@@ -2,8 +2,7 @@ use bytemuck::{bytes_of, cast_slice_mut, from_bytes_mut, Contiguous, Pod};
 
 use crate::error::MangoResult;
 use crate::matching::Side;
-use crate::state::RootBank;
-use crate::state::ONE_I80F48;
+use crate::state::{RootBank, ONE_I80F48};
 use fixed::types::I80F48;
 use solana_program::account_info::AccountInfo;
 use solana_program::program_error::ProgramError;
@@ -20,6 +19,7 @@ pub mod serum_fees_mod {
 
     declare_id!("APBH71knizgDfsY3kYkv9PDhTizaJXywC1XNNRLwdKHQ");
 }
+
 use crate::state::{PerpAccount, PerpMarketCache};
 
 use mango_logs::{mango_emit_stack, PerpBalanceLog};

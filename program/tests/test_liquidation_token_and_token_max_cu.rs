@@ -1,5 +1,6 @@
 mod program_test;
 
+use fixed_macro::types::I80F48;
 use mango::state::*;
 use program_test::cookies::*;
 use program_test::scenarios::*;
@@ -125,6 +126,7 @@ async fn test_liquidation_token_and_token_max_cu() {
         asker_user_index,
         mint_index,  // Asset index
         QUOTE_INDEX, // Liab index
+        I80F48!(10_000),
     )
     .await;
 }

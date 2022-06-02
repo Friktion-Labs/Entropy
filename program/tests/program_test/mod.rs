@@ -3,11 +3,12 @@ use std::mem::size_of;
 
 use bincode::deserialize;
 use fixed::types::I80F48;
-use mango_common::Loadable;
+use serum_dex::instruction::NewOrderInstructionV3;
+use solana_program::entrypoint::ProgramResult;
+use solana_program::instruction::InstructionError;
 use solana_program::{
     account_info::AccountInfo,
     clock::{Clock, UnixTimestamp},
-    instruction::InstructionError,
     program_option::COption,
     program_pack::Pack,
     pubkey::*,
@@ -15,24 +16,25 @@ use solana_program::{
     system_instruction, sysvar,
 };
 use solana_program_test::*;
+use solana_sdk::commitment_config::CommitmentLevel;
+use solana_sdk::transaction::TransactionError;
 use solana_sdk::{
     account::ReadableAccount,
     instruction::Instruction,
     signature::{Keypair, Signer},
-    transaction::{Transaction, TransactionError},
+    transaction::Transaction,
     transport::TransportError,
 };
 use spl_token::{state::*, *};
 
 use mango::{entrypoint::*, ids::*, instruction::*, matching::*, oracle::*, state::*, utils::*};
+use mango_common::Loadable;
 
-use serum_dex::instruction::NewOrderInstructionV3;
-use solana_program::entrypoint::ProgramResult;
+use self::cookies::*;
 
 pub mod assertions;
 pub mod cookies;
 pub mod scenarios;
-use self::cookies::*;
 
 const RUST_LOG_DEFAULT: &str = "solana_rbpf::vm=info,\
              solana_program_runtime::stable_log=debug,\
@@ -62,19 +64,6 @@ impl AddPacked for ProgramTest {
         let mut account = solana_sdk::account::Account::new(amount, T::get_packed_len(), owner);
         data.pack_into_slice(&mut account.data);
         self.add_account(pubkey, account);
-    }
-}
-
-pub fn get_error_code(error: TransportError) -> Option<u32> {
-    match error {
-        TransportError::TransactionError(error) => match error {
-            TransactionError::InstructionError(_, error) => match error {
-                InstructionError::Custom(error_code) => Some(error_code),
-                _ => None,
-            },
-            _ => None,
-        },
-        _ => None,
     }
 }
 
@@ -289,7 +278,7 @@ impl MangoProgramTest {
         test.add_program("serum_dex", serum_program_id, processor!(process_serum_instruction));
         // TODO: add more programs (oracles)
         // limit to track compute unit increase
-        test.set_bpf_compute_max_units(config.compute_limit);
+        test.set_compute_max_units(config.compute_limit);
 
         // Supress some of the logs
         solana_logger::setup_with_default(RUST_LOG_DEFAULT);
@@ -418,7 +407,10 @@ impl MangoProgramTest {
 
         transaction.sign(&all_signers, self.context.last_blockhash);
 
-        self.context.banks_client.process_transaction(transaction).await
+        self.context
+            .banks_client
+            .process_transaction_with_commitment(transaction, CommitmentLevel::Processed)
+            .await
     }
 
     #[allow(dead_code)]
@@ -540,9 +532,9 @@ impl MangoProgramTest {
     }
 
     pub async fn load_account<T: Loadable>(&mut self, acc_pk: Pubkey) -> T {
-        let mut acc = self.context.banks_client.get_account(acc_pk).await.unwrap().unwrap();
-        let acc_info: AccountInfo = (&acc_pk, &mut acc).into();
-        return *T::load(&acc_info).unwrap();
+        let acc = self.context.banks_client.get_account(acc_pk).await.unwrap().unwrap();
+        // let acc_info: AccountInfo = (&acc_pk, &mut acc).into();
+        return *T::load_from_bytes(&acc.data).unwrap();
     }
 
     #[allow(dead_code)]
@@ -603,35 +595,6 @@ impl MangoProgramTest {
     pub async fn with_mango_cache(&mut self, mango_group: &MangoGroup) -> (Pubkey, MangoCache) {
         let mango_cache = self.load_account::<MangoCache>(mango_group.mango_cache).await;
         return (mango_group.mango_cache, mango_cache);
-    }
-
-    #[allow(dead_code)]
-    pub async fn with_health<'a>(
-        &mut self,
-        mango_group: &MangoGroup,
-        user_mango_account: &MangoAccount,
-        active_assets: UserActiveAssets,
-        open_orders: &'a Vec<AccountInfo<'a>>,
-    ) -> I80F48 {
-        let mango_cache = self.load_account::<MangoCache>(mango_group.mango_cache).await;
-
-        let packed_open_orders =
-            user_mango_account.checked_unpack_open_orders(mango_group, open_orders).unwrap();
-
-        let open_orders = load_open_orders_accounts(&packed_open_orders).unwrap();
-
-        let mut health_cache = HealthCache::new(active_assets);
-        health_cache
-            .init_vals_with_orders_vec(
-                &mango_group,
-                &mango_cache,
-                &user_mango_account,
-                &open_orders,
-            )
-            .unwrap();
-
-        let health = health_cache.get_health(&mango_group, HealthType::Init);
-        health
     }
 
     #[allow(dead_code)]
@@ -845,6 +808,7 @@ impl MangoProgramTest {
             reduce_only,
             expiry_timestamp,
             limit,
+            ExpiryType::Absolute,
         )
         .unwrap()];
         self.process_transaction(&instructions, Some(&[&user])).await.unwrap();
@@ -1170,127 +1134,6 @@ impl MangoProgramTest {
     }
 
     #[allow(dead_code)]
-    pub async fn init_otc_orders(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        mango_account_pk: &Pubkey,
-        user_index: usize,
-    ) -> (Pubkey, u8) {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        let (otc_orders_pk, bump) = Pubkey::find_program_address(
-            &[mango::utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
-            &self.mango_program_id,
-        );
-
-        self.process_transaction(
-            &[init_otc_orders(&self.mango_program_id, mango_group_pk, mango_account_pk, &owner_pk)
-                .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-        .unwrap();
-
-        (otc_orders_pk, bump)
-    }
-
-    #[allow(dead_code)]
-    pub async fn create_perp_otc_order(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        mango_account_pk: &Pubkey,
-        counterparty_pk: &Pubkey,
-        perp_market_pk: &Pubkey,
-        user_index: usize,
-        price: i64,
-        size: u64,
-        expires: UnixTimestamp,
-        side: Side,
-    ) -> Result<(), TransportError> {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        self.process_transaction(
-            &[create_perp_otc_order(
-                &self.mango_program_id,
-                mango_group_pk,
-                mango_account_pk,
-                counterparty_pk,
-                perp_market_pk,
-                &owner_pk,
-                price,
-                size,
-                expires,
-                side,
-            )
-            .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-    }
-
-    #[allow(dead_code)]
-    pub async fn cancel_perp_otc_order(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        mango_account_pk: &Pubkey,
-        user_index: usize,
-        order_id: usize,
-    ) -> Result<(), TransportError> {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        self.process_transaction(
-            &[cancel_perp_otc_order(
-                &self.mango_program_id,
-                mango_group_pk,
-                mango_account_pk,
-                &owner_pk,
-                order_id,
-            )
-            .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-    }
-
-    #[allow(dead_code)]
-    pub async fn take_perp_otc_order(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        counterparty_mango_account_pk: &Pubkey,
-        creator_mango_account_pk: &Pubkey,
-        perp_market_pk: &Pubkey,
-        mango_cache_pk: &Pubkey,
-        packed_counterparty_open_orders_pks: &Vec<Pubkey>,
-        packed_creator_open_orders_pks: &Vec<Pubkey>,
-        user_index: usize,
-        order_id: usize,
-    ) -> Result<(), TransportError> {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        self.process_transaction(
-            &[take_perp_otc_order(
-                &self.mango_program_id,
-                mango_group_pk,
-                counterparty_mango_account_pk,
-                creator_mango_account_pk,
-                &owner_pk,
-                perp_market_pk,
-                mango_cache_pk,
-                packed_counterparty_open_orders_pks,
-                packed_creator_open_orders_pks,
-                order_id,
-            )
-            .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-    }
-
-    #[allow(dead_code)]
     pub async fn create_spot_open_orders(
         &mut self,
         mango_group_pk: &Pubkey,
@@ -1386,28 +1229,28 @@ impl MangoProgramTest {
         self.process_transaction(&instructions, None).await.unwrap();
     }
 
-    pub async fn cache_all_root_banks(
-        &mut self,
-        mango_group: &MangoGroup,
-        mango_group_pk: &Pubkey,
-    ) {
-        let mango_program_id = self.mango_program_id;
-        let mut root_bank_pks = Vec::new();
-        for token in mango_group.tokens.iter() {
-            if token.root_bank != Pubkey::default() {
-                root_bank_pks.push(token.root_bank);
-            }
-        }
-
-        let instructions = [cache_root_banks(
-            &mango_program_id,
-            &mango_group_pk,
-            &mango_group.mango_cache,
-            &root_bank_pks,
-        )
-        .unwrap()];
-        self.process_transaction(&instructions, None).await.unwrap();
-    }
+    // pub async fn cache_all_root_banks(
+    //     &mut self,
+    //     mango_group: &MangoGroup,
+    //     mango_group_pk: &Pubkey,
+    // ) {
+    //     let mango_program_id = self.mango_program_id;
+    //     let mut root_bank_pks = Vec::new();
+    //     for token in mango_group.tokens.iter() {
+    //         if token.root_bank != Pubkey::default() {
+    //             root_bank_pks.push(token.root_bank);
+    //         }
+    //     }
+    //
+    //     let instructions = [cache_root_banks(
+    //         &mango_program_id,
+    //         &mango_group_pk,
+    //         &mango_group.mango_cache,
+    //         &root_bank_pks,
+    //     )
+    //     .unwrap()];
+    //     self.process_transaction(&instructions, None).await.unwrap();
+    // }
 
     pub async fn cache_all_prices(
         &mut self,
@@ -1428,51 +1271,74 @@ impl MangoProgramTest {
 
     pub async fn update_all_root_banks(
         &mut self,
-        mango_group: &MangoGroup,
+        mango_group_cookie: &MangoGroupCookie,
         mango_group_pk: &Pubkey,
     ) {
         let mango_program_id = self.mango_program_id;
-        for mint_index in 0..self.num_mints {
-            let root_bank_pk = mango_group.tokens[mint_index].root_bank;
-            if root_bank_pk != Pubkey::default() {
-                let (root_bank_pk, root_bank) = self.with_root_bank(mango_group, mint_index).await;
-                let (node_bank_pk, _node_bank) = self.with_node_bank(&root_bank, 0).await;
-
-                let instructions = [update_root_bank(
+        let mut instructions = vec![];
+        let mango_group = &mango_group_cookie.mango_group;
+        println!("{} {}", self.num_mints, mango_group_cookie.root_banks.len());
+        for i in 0..self.num_mints {
+            let index = if i == self.num_mints - 1 { QUOTE_INDEX } else { i };
+            instructions.push(
+                update_root_bank(
                     &mango_program_id,
                     &mango_group_pk,
                     &mango_group.mango_cache,
-                    &root_bank_pk,
-                    &[node_bank_pk],
+                    &mango_group.tokens[index].root_bank,
+                    &[mango_group_cookie.root_banks[i].node_banks[0]],
                 )
-                .unwrap()];
-                self.process_transaction(&instructions, None).await.unwrap();
-            }
+                .unwrap(),
+            )
         }
-    }
-
-    pub async fn update_funding(
-        &mut self,
-        mango_group_cookie: &MangoGroupCookie,
-        perp_market_cookie: &PerpMarketCookie,
-    ) {
-        let mango_group = mango_group_cookie.mango_group;
-        let mango_group_pk = mango_group_cookie.address;
-        let mango_program_id = self.mango_program_id;
-        let perp_market = perp_market_cookie.perp_market;
-        let perp_market_pk = perp_market_cookie.address;
-
-        let instructions = [update_funding(
-            &mango_program_id,
-            &mango_group_pk,
-            &mango_group.mango_cache,
-            &perp_market_pk,
-            &perp_market.bids,
-            &perp_market.asks,
-        )
-        .unwrap()];
         self.process_transaction(&instructions, None).await.unwrap();
     }
+
+    pub async fn update_all_funding(&mut self, mango_group_cookie: &MangoGroupCookie) {
+        let mango_group = &mango_group_cookie.mango_group;
+
+        let mut instructions = vec![];
+        for pmc in mango_group_cookie.perp_markets.iter() {
+            let perp_market = &pmc.perp_market;
+
+            instructions.push(
+                update_funding(
+                    &self.mango_program_id,
+                    &mango_group_cookie.address,
+                    &mango_group.mango_cache,
+                    &pmc.address,
+                    &perp_market.bids,
+                    &perp_market.asks,
+                )
+                .unwrap(),
+            )
+        }
+
+        self.process_transaction(&instructions, None).await.unwrap();
+    }
+
+    // pub async fn update_funding(
+    //     &mut self,
+    //     mango_group_cookie: &MangoGroupCookie,
+    //     perp_market_cookie: &PerpMarketCookie,
+    // ) {
+    //     let mango_group = mango_group_cookie.mango_group;
+    //     let mango_group_pk = mango_group_cookie.address;
+    //     let mango_program_id = self.mango_program_id;
+    //     let perp_market = perp_market_cookie.perp_market;
+    //     let perp_market_pk = perp_market_cookie.address;
+    //
+    //     let instructions = [update_funding(
+    //         &mango_program_id,
+    //         &mango_group_pk,
+    //         &mango_group.mango_cache,
+    //         &perp_market_pk,
+    //         &perp_market.bids,
+    //         &perp_market.asks,
+    //     )
+    //     .unwrap()];
+    //     self.process_transaction(&instructions, None).await.unwrap();
+    // }
 
     #[allow(dead_code)]
     pub async fn place_spot_order(
@@ -1873,7 +1739,7 @@ impl MangoProgramTest {
             allow_borrow,
         )
         .unwrap()];
-        self.process_transaction(&instructions, Some(&[&user])).await;
+        self.process_transaction(&instructions, Some(&[&user])).await.unwrap();
     }
 
     #[allow(dead_code)]
@@ -1892,7 +1758,6 @@ impl MangoProgramTest {
         let mango_account = mango_group_cookie.mango_accounts[user_index].mango_account;
         let mango_account_pk = mango_group_cookie.mango_accounts[user_index].address;
 
-        let _user = Keypair::from_base58_string(&self.users[user_index].to_base58_string());
         let delegate_user =
             Keypair::from_base58_string(&self.users[delegate_user_index].to_base58_string());
         let user_token_account = self.with_user_token_account(user_index, mint_index);
@@ -1953,15 +1818,12 @@ impl MangoProgramTest {
         &mut self,
         mango_group_cookie: &MangoGroupCookie,
         user_index: usize,
-        delegate_user_index: usize,
     ) {
         let mango_program_id = self.mango_program_id;
         let mango_group_pk = mango_group_cookie.address;
         let mango_account_pk = mango_group_cookie.mango_accounts[user_index].address;
 
         let user = Keypair::from_base58_string(&self.users[user_index].to_base58_string());
-        let _delegate =
-            Keypair::from_base58_string(&self.users[delegate_user_index].to_base58_string());
 
         let instructions = [set_delegate(
             &mango_program_id,
@@ -1982,6 +1844,7 @@ impl MangoProgramTest {
         liqor_index: usize,
         asset_index: usize,
         liab_index: usize,
+        max_liab_transfer: I80F48,
     ) {
         let mango_program_id = self.mango_program_id;
         let mango_group = mango_group_cookie.mango_group;
@@ -2000,8 +1863,6 @@ impl MangoProgramTest {
         let (liab_root_bank_pk, liab_root_bank) =
             self.with_root_bank(&mango_group, liab_index).await;
         let (liab_node_bank_pk, _liab_node_bank) = self.with_node_bank(&liab_root_bank, 0).await;
-
-        let max_liab_transfer = I80F48::from_num(10_000); // TODO: This needs to adapt to the situation probably
 
         let instructions = vec![mango::instruction::liquidate_token_and_token(
             &mango_program_id,
@@ -2124,6 +1985,156 @@ impl MangoProgramTest {
         mango_group_cookie.mango_accounts[liqor_index].mango_account =
             self.load_account::<MangoAccount>(liqor_mango_account_pk).await;
     }
+
+    #[allow(dead_code)]
+    pub async fn init_otc_orders(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+    ) -> (Pubkey, u8) {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        let (otc_orders_pk, bump) = Pubkey::find_program_address(
+            &[mango::utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+            &self.mango_program_id,
+        );
+
+        self.process_transaction(
+            &[init_otc_orders(&self.mango_program_id, mango_group_pk, mango_account_pk, &owner_pk)
+                .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+        .unwrap();
+
+        (otc_orders_pk, bump)
+    }
+
+    #[allow(dead_code)]
+    pub async fn create_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        counterparty_pk: &Pubkey,
+        perp_market_pk: &Pubkey,
+        user_index: usize,
+        price: i64,
+        size: u64,
+        expires: UnixTimestamp,
+        side: Side,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[create_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                counterparty_pk,
+                perp_market_pk,
+                &owner_pk,
+                price,
+                size,
+                expires,
+                side,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn cancel_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+        order_id: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[cancel_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                &owner_pk,
+                order_id,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn take_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        counterparty_mango_account_pk: &Pubkey,
+        creator_mango_account_pk: &Pubkey,
+        perp_market_pk: &Pubkey,
+        mango_cache_pk: &Pubkey,
+        packed_counterparty_open_orders_pks: &Vec<Pubkey>,
+        packed_creator_open_orders_pks: &Vec<Pubkey>,
+        user_index: usize,
+        order_id: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[take_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                counterparty_mango_account_pk,
+                creator_mango_account_pk,
+                &owner_pk,
+                perp_market_pk,
+                mango_cache_pk,
+                packed_counterparty_open_orders_pks,
+                packed_creator_open_orders_pks,
+                order_id,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn with_health<'a>(
+        &mut self,
+        mango_group: &MangoGroup,
+        user_mango_account: &MangoAccount,
+        active_assets: UserActiveAssets,
+        open_orders: &'a Vec<AccountInfo<'a>>,
+    ) -> I80F48 {
+        let mango_cache = self.load_account::<MangoCache>(mango_group.mango_cache).await;
+
+        let packed_open_orders =
+            user_mango_account.checked_unpack_open_orders(mango_group, open_orders).unwrap();
+
+        let open_orders = load_open_orders_accounts(&packed_open_orders).unwrap();
+
+        let mut health_cache = HealthCache::new(active_assets);
+        health_cache
+            .init_vals_with_orders_vec(
+                &mango_group,
+                &mango_cache,
+                &user_mango_account,
+                &open_orders,
+            )
+            .unwrap();
+
+        let health = health_cache.get_health(&mango_group, HealthType::Init);
+        health
+    }
 }
 
 fn process_serum_instruction(
@@ -2132,4 +2143,16 @@ fn process_serum_instruction(
     instruction_data: &[u8],
 ) -> ProgramResult {
     Ok(serum_dex::state::State::process(program_id, accounts, instruction_data)?)
+}
+pub fn get_error_code(error: TransportError) -> Option<u32> {
+    match error {
+        TransportError::TransactionError(error) => match error {
+            TransactionError::InstructionError(_, error) => match error {
+                InstructionError::Custom(error_code) => Some(error_code),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
 }

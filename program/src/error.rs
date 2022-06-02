@@ -137,6 +137,16 @@ pub enum MangoErrorCode {
     InvalidOtcOrderIndex,
     #[error("MangoErrorCode::OtcOrderExpired OTC order expired")]
     OtcOrderExpired,
+    #[error("MangoErrorCode::ReduceOnlyRequired This market requires reduce-only flag to be set")]
+    ReduceOnlyRequired,
+    #[error(
+        "MangoErrorCode::InvalidAllowBorrow This market requires allow-borrow flag to be false"
+    )]
+    InvalidAllowBorrow,
+    #[error(
+        "MangoErrorCode::InvalidOrderInClosingMarket You may only have one open order at a time and it must be reducing position"
+    )]
+    InvalidOrderInClosingMarket,
 
     #[error("MangoErrorCode::Default Check the source code for more info")] // 40
     Default = u32::MAX_VALUE,
