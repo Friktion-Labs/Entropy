@@ -17,10 +17,7 @@ use solana_program::{
 };
 use solana_program_test::*;
 use solana_sdk::commitment_config::CommitmentLevel;
-<<<<<<< HEAD
-=======
 use solana_sdk::transaction::TransactionError;
->>>>>>> 5e3b8ca (fix tests and update serum fixture)
 use solana_sdk::{
     account::ReadableAccount,
     instruction::Instruction,
