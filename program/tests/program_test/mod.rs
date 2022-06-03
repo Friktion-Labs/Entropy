@@ -414,6 +414,41 @@ impl MangoProgramTest {
     }
 
     #[allow(dead_code)]
+    pub async fn perform_deposit_with_mango_acc_pk(
+        &mut self,
+        mango_group_cookie: &MangoGroupCookie,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+        mint_index: usize,
+        amount: u64,
+    ) {
+        let mango_program_id = self.mango_program_id;
+        let mango_group = mango_group_cookie.mango_group;
+        let mango_group_pk = mango_group_cookie.address;
+
+        let user = Keypair::from_base58_string(&self.users[user_index].to_base58_string());
+        let user_token_account = self.with_user_token_account(user_index, mint_index);
+
+        let (root_bank_pk, root_bank) = self.with_root_bank(&mango_group, mint_index).await;
+        let (node_bank_pk, node_bank) = self.with_node_bank(&root_bank, 0).await;
+
+        let instructions = [deposit(
+            &mango_program_id,
+            &mango_group_pk,
+            &mango_account_pk,
+            &user.pubkey(),
+            &mango_group.mango_cache,
+            &root_bank_pk,
+            &node_bank_pk,
+            &node_bank.vault,
+            &user_token_account,
+            amount,
+        )
+        .unwrap()];
+        self.process_transaction(&instructions, Some(&[&user])).await.unwrap();
+    }
+
+    #[allow(dead_code)]
     pub async fn get_account(&mut self, address: Pubkey) -> solana_sdk::account::Account {
         return self.context.banks_client.get_account(address).await.unwrap().unwrap();
     }
