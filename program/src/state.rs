@@ -2275,20 +2275,28 @@ impl PerpMarket {
         const MAX_FUNDING: I80F48 = I80F48!(0.0075);
         const MIN_FUNDING: I80F48 = I80F48!(-0.0075);
 
+        const MAX_BTC2_FUNDING: I80F48 = I80F48!(0.05);
+        const MIN_BTC2_FUNDING: I80F48 = I80F48!(-0.05);
+
+        // TODO: change market index == 0 to checkign for non-spot-perp markets
+        let min_funding_clamp = if market_index == 0 { MIN_BTC2_FUNDING } else { MIN_FUNDING };
+        let max_funding_clamp = if market_index == 0 { MAX_BTC2_FUNDING } else { MAX_FUNDING };
+
         let diff = match (bid, ask) {
             (Some(bid), Some(ask)) => {
                 // calculate mid-market rate
                 let book_price = self.lot_to_native_price((bid + ask) / 2);
-                (book_price / index_price - ONE_I80F48).clamp(MIN_FUNDING, MAX_FUNDING)
+                (book_price / index_price - ONE_I80F48).clamp(min_funding_clamp, max_funding_clamp)
             }
-            (Some(_bid), None) => MAX_FUNDING,
-            (None, Some(_ask)) => MIN_FUNDING,
+            (Some(_bid), None) => max_funding_clamp,
+            (None, Some(_ask)) => min_funding_clamp,
             (None, None) => ZERO_I80F48,
         };
 
         // TODO TEST consider what happens if time_factor is very small. Can funding_delta == 0 when diff != 0?
 
         // DAI: Use 7-day funding for power perps.
+        // TODO: change market index == 0 to checkign for non-spot-perp markets
         let funding_period = if market_index == 0 { WEEK } else { DAY };
         let time_factor = I80F48::from_num(now_ts - self.last_updated) / funding_period;
 
@@ -2297,7 +2305,6 @@ impl PerpMarket {
             .unwrap()
             .checked_mul(time_factor)
             .unwrap()
-            .clamp(MIN_FUNDING, MAX_FUNDING)
             .checked_mul(I80F48::from_num(self.base_lot_size))
             .unwrap();
 
