@@ -2,9 +2,9 @@ name: Lint and Test
 
 on:
   push:
-    branches: [main, v*.*]
+    branches: [main, m1-modifs, v*.*]
   pull_request:
-    branches: [main, v*.*]
+    branches: [main, m1-modifs, v*.*]
 
 env:
   CARGO_TERM_COLOR: always
