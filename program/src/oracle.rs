@@ -69,8 +69,7 @@ pub fn determine_oracle_type(account: &AccountInfo) -> OracleType {
         OracleType::Switchboard
     } else if magic == STUB_MAGIC {
         OracleType::Stub
-    }
-    else {
+    } else {
         OracleType::Unknown
     }
 }
