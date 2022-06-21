@@ -6482,54 +6482,6 @@ impl Processor {
     }
 
     #[inline(never)]
-    fn delete_perp_otc_order(
-        program_id: &Pubkey,
-        accounts: &[AccountInfo],
-        order_id: usize,
-    ) -> MangoResult {
-        const NUM_FIXED: usize = 5;
-
-        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, otc_order_owner_ai, system_program_ai] =
-            array_ref![accounts, 0, NUM_FIXED];
-
-        // Unpack accounts state
-        let _mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
-
-        let creator_mango_account_state =
-            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
-
-        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
-
-        // Check accounts
-        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
-        check_eq!(
-            otc_order_owner_ai.key,
-            &creator_mango_account_state.owner,
-            MangoErrorCode::InvalidAccount
-        )?;
-        check_eq!(
-            creator_mango_account_ai.key,
-            &otc_orders.creator_account,
-            MangoErrorCode::InvalidAccount
-        )?;
-        check_eq!(
-            system_program_ai.key,
-            &solana_program::system_program::id(),
-            MangoErrorCode::InvalidProgramId
-        )?;
-
-        let (otc_orders_pda, _) = Pubkey::find_program_address(
-            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
-            program_id,
-        );
-        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
-
-        otc_orders.delete_perp_order_by_index(order_id)?;
-
-        Ok(())
-    }
-
-    #[inline(never)]
     fn delete_all_perp_otc_orders(program_id: &Pubkey, accounts: &[AccountInfo]) -> MangoResult {
         const NUM_FIXED: usize = 5;
 
@@ -6617,54 +6569,6 @@ impl Processor {
         check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
 
         otc_orders.cancel_spot_order_by_index(order_id)?;
-
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn delete_spot_otc_order(
-        program_id: &Pubkey,
-        accounts: &[AccountInfo],
-        order_id: usize,
-    ) -> MangoResult {
-        const NUM_FIXED: usize = 5;
-
-        let [otc_orders_pda_ai, mango_group_ai, creator_mango_account_ai, otc_order_owner_ai, system_program_ai] =
-            array_ref![accounts, 0, NUM_FIXED];
-
-        // Unpack accounts state
-        let _mango_group_state = MangoGroup::load_checked(mango_group_ai, program_id)?;
-
-        let creator_mango_account_state =
-            MangoAccount::load_checked(creator_mango_account_ai, program_id, mango_group_ai.key)?;
-
-        let mut otc_orders = OtcOrders::load_mut_checked(otc_orders_pda_ai, program_id)?;
-
-        // Check accounts
-        check!(otc_order_owner_ai.is_signer, MangoErrorCode::SignerNecessary)?;
-        check_eq!(
-            otc_order_owner_ai.key,
-            &creator_mango_account_state.owner,
-            MangoErrorCode::InvalidAccount
-        )?;
-        check_eq!(
-            creator_mango_account_ai.key,
-            &otc_orders.creator_account,
-            MangoErrorCode::InvalidAccount
-        )?;
-        check_eq!(
-            system_program_ai.key,
-            &solana_program::system_program::id(),
-            MangoErrorCode::InvalidProgramId
-        )?;
-
-        let (otc_orders_pda, _) = Pubkey::find_program_address(
-            &[OTC_ORDERS_PREFIX.as_bytes(), creator_mango_account_ai.key.as_ref()],
-            program_id,
-        );
-        check_eq!(&otc_orders_pda, otc_orders_pda_ai.key, MangoErrorCode::InvalidProgramId)?;
-
-        otc_orders.delete_spot_order_by_index(order_id)?;
 
         Ok(())
     }
@@ -7521,10 +7425,6 @@ impl Processor {
                 msg!("Mango: CancelPerpOtcOrder");
                 Self::cancel_perp_otc_order(program_id, accounts, order_id)
             }
-            MangoInstruction::DeletePerpOtcOrder { order_id } => {
-                msg!("Mango: DeletePerpOtcOrder");
-                Self::delete_perp_otc_order(program_id, accounts, order_id)
-            }
             MangoInstruction::DeleteAllPerpOtcOrders => {
                 msg!("Mango: DeleteAllPerpOtcOrders");
                 Self::delete_all_perp_otc_orders(program_id, accounts)
@@ -7532,10 +7432,6 @@ impl Processor {
             MangoInstruction::CancelSpotOtcOrder { order_id } => {
                 msg!("Mango: CancelSpotOtcOrder");
                 Self::cancel_spot_otc_order(program_id, accounts, order_id)
-            }
-            MangoInstruction::DeleteSpotOtcOrder { order_id } => {
-                msg!("Mango: DeleteSpotOtcOrder");
-                Self::delete_spot_otc_order(program_id, accounts, order_id)
             }
             MangoInstruction::DeleteAllSpotOtcOrders => {
                 msg!("Mango: DeleteAllSpotOtcOrders");
