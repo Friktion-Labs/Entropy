@@ -2493,9 +2493,19 @@ impl OtcOrders {
         Ok(&mut self.perp_orders[index])
     }
 
+    pub fn get_perp_order(&self, index: usize) -> MangoResult<&PerpOtcOrder> {
+        check!(index < self.perp_orders_len, MangoErrorCode::InvalidOtcOrderIndex)?;
+        Ok(&self.perp_orders[index])
+    }
+
     pub fn get_mut_spot_order(&mut self, index: usize) -> MangoResult<&mut SpotOtcOrder> {
         check!(index < self.spot_orders_len, MangoErrorCode::InvalidOtcOrderIndex)?;
         Ok(&mut self.spot_orders[index])
+    }
+
+    pub fn get_spot_order(&self, index: usize) -> MangoResult<&SpotOtcOrder> {
+        check!(index < self.spot_orders_len, MangoErrorCode::InvalidOtcOrderIndex)?;
+        Ok(&self.spot_orders[index])
     }
 
     pub fn delete_perp_order_by_index(&mut self, index: usize) -> MangoResult<()> {
@@ -2606,6 +2616,14 @@ impl OtcOrders {
         Ok(())
     }
 
+    pub fn cancel_all_perp_orders(&mut self) -> MangoResult<()> {
+        for i in 0..self.perp_orders_len {
+            self.cancel_perp_order_by_index(i)?;
+        }
+
+        Ok(())
+    }
+
     pub fn cancel_spot_order_by_index(&mut self, index: usize) -> MangoResult<()> {
         if index >= self.spot_orders_len {
             return Err(throw_err!(MangoErrorCode::InvalidOtcOrderIndex));
@@ -2618,6 +2636,14 @@ impl OtcOrders {
         }
 
         order.status = OtcOrderStatus::Canceled;
+
+        Ok(())
+    }
+
+    pub fn cancel_all_spot_orders(&mut self) -> MangoResult<()> {
+        for i in 0..self.spot_orders_len {
+            self.cancel_spot_order_by_index(i)?;
+        }
 
         Ok(())
     }

@@ -2073,6 +2073,29 @@ impl MangoProgramTest {
     }
 
     #[allow(dead_code)]
+    pub async fn delete_all_perp_otc_orders(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[delete_all_perp_otc_orders(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                &owner_pk,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
     pub async fn take_perp_otc_order(
         &mut self,
         mango_group_pk: &Pubkey,

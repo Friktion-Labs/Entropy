@@ -1118,6 +1118,17 @@ pub enum MangoInstruction {
         order_id: usize,
     },
 
+    /// Delete all perp OTC orders.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` System program.
+    DeleteAllPerpOtcOrders,
+
     /// Cancel spot OTC order.
     ///
     /// Accounts:
@@ -1130,6 +1141,17 @@ pub enum MangoInstruction {
     CancelSpotOtcOrder {
         order_id: usize,
     },
+
+    /// Delete all spot OTC orders.
+    ///
+    /// Accounts:
+    ///
+    /// 0. `[writable]` Initialized `state::OtcOrders` PDA: `["otc_orders", creator_account]`.
+    /// 1. `[]` Mango group.
+    /// 2. `[]` Mango account of owner.
+    /// 3. `[signer]` Order owner wallet.
+    /// 4. `[]` System program.
+    DeleteAllSpotOtcOrders,
 
     /// Take perp OTC order.
     ///
@@ -1662,11 +1684,13 @@ impl MangoInstruction {
                 let data_arr = array_ref![data, 0, 8];
                 MangoInstruction::CancelPerpOtcOrder { order_id: usize::from_le_bytes(*data_arr) }
             }
-            70 => {
+            70 => MangoInstruction::DeleteAllPerpOtcOrders,
+            71 => {
                 let data_arr = array_ref![data, 0, 8];
                 MangoInstruction::CancelSpotOtcOrder { order_id: usize::from_le_bytes(*data_arr) }
             }
-            71 => {
+            72 => MangoInstruction::DeleteAllSpotOtcOrders,
+            73 => {
                 let data_arr = array_ref![data, 0, 16];
                 let (order_id, open_orders_count) = array_refs![data_arr, 8, 8];
                 MangoInstruction::TakePerpOtcOrder {
@@ -3140,6 +3164,79 @@ pub fn cancel_perp_otc_order(
     ];
 
     let instr = MangoInstruction::CancelPerpOtcOrder { order_id };
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn delete_all_perp_otc_orders(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new_readonly(*mango_account_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instr = MangoInstruction::DeleteAllPerpOtcOrders;
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn cancel_spot_otc_order(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+    order_id: usize,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new_readonly(*mango_account_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instr = MangoInstruction::CancelSpotOtcOrder { order_id };
+    let data = instr.pack();
+    Ok(Instruction { program_id: *program_id, accounts, data })
+}
+
+pub fn delete_all_spot_otc_orders(
+    program_id: &Pubkey,
+    mango_group_pk: &Pubkey,
+    mango_account_pk: &Pubkey,
+    owner_pk: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    let (otc_orders, _) = Pubkey::find_program_address(
+        &[utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+        program_id,
+    );
+
+    let accounts = vec![
+        AccountMeta::new(otc_orders, false),
+        AccountMeta::new_readonly(*mango_group_pk, false),
+        AccountMeta::new_readonly(*mango_account_pk, false),
+        AccountMeta::new(*owner_pk, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instr = MangoInstruction::DeleteAllSpotOtcOrders;
     let data = instr.pack();
     Ok(Instruction { program_id: *program_id, accounts, data })
 }
