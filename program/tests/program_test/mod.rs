@@ -1162,92 +1162,6 @@ impl MangoProgramTest {
     }
 
     #[allow(dead_code)]
-    pub async fn init_otc_orders(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        mango_account_pk: &Pubkey,
-        user_index: usize,
-    ) -> (Pubkey, u8) {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        let (otc_orders_pk, bump) = Pubkey::find_program_address(
-            &[mango::utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
-            &self.mango_program_id,
-        );
-
-        self.process_transaction(
-            &[init_otc_orders(&self.mango_program_id, mango_group_pk, mango_account_pk, &owner_pk)
-                .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-        .unwrap();
-
-        (otc_orders_pk, bump)
-    }
-
-    #[allow(dead_code)]
-    pub async fn create_perp_otc_order(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        mango_account_pk: &Pubkey,
-        counterparty_pk: &Pubkey,
-        perp_market_pk: &Pubkey,
-        user_index: usize,
-        price: i64,
-        size: u64,
-        expires: UnixTimestamp,
-        side: Side,
-    ) -> Result<(), TransportError> {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        self.process_transaction(
-            &[create_perp_otc_order(
-                &self.mango_program_id,
-                mango_group_pk,
-                mango_account_pk,
-                counterparty_pk,
-                perp_market_pk,
-                &owner_pk,
-                price,
-                size,
-                expires,
-                side,
-            )
-            .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-    }
-
-    #[allow(dead_code)]
-    pub async fn cancel_perp_otc_order(
-        &mut self,
-        mango_group_pk: &Pubkey,
-        mango_account_pk: &Pubkey,
-        user_index: usize,
-        order_id: usize,
-    ) -> Result<(), TransportError> {
-        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
-        let owner_pk = owner_key.pubkey();
-
-        self.process_transaction(
-            &[cancel_perp_otc_order(
-                &self.mango_program_id,
-                mango_group_pk,
-                mango_account_pk,
-                &owner_pk,
-                order_id,
-            )
-            .unwrap()],
-            Some(&[&owner_key]),
-        )
-        .await
-    }
-
-    #[allow(dead_code)]
     pub async fn take_perp_otc_order(
         &mut self,
         mango_group_pk: &Pubkey,
@@ -2133,6 +2047,115 @@ impl MangoProgramTest {
 
         mango_group_cookie.mango_accounts[liqor_index].mango_account =
             self.load_account::<MangoAccount>(liqor_mango_account_pk).await;
+    }
+
+    #[allow(dead_code)]
+    pub async fn init_otc_orders(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+    ) -> (Pubkey, u8) {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        let (otc_orders_pk, bump) = Pubkey::find_program_address(
+            &[mango::utils::OTC_ORDERS_PREFIX.as_bytes(), mango_account_pk.as_ref()],
+            &self.mango_program_id,
+        );
+
+        self.process_transaction(
+            &[init_otc_orders(&self.mango_program_id, mango_group_pk, mango_account_pk, &owner_pk)
+                .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+        .unwrap();
+
+        (otc_orders_pk, bump)
+    }
+
+    #[allow(dead_code)]
+    pub async fn create_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        counterparty_pk: &Pubkey,
+        perp_market_pk: &Pubkey,
+        user_index: usize,
+        price: i64,
+        size: u64,
+        expires: UnixTimestamp,
+        side: Side,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[create_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                counterparty_pk,
+                perp_market_pk,
+                &owner_pk,
+                price,
+                size,
+                expires,
+                side,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn cancel_perp_otc_order(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+        order_id: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[cancel_perp_otc_order(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                &owner_pk,
+                order_id,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn delete_all_perp_otc_orders(
+        &mut self,
+        mango_group_pk: &Pubkey,
+        mango_account_pk: &Pubkey,
+        user_index: usize,
+    ) -> Result<(), TransportError> {
+        let owner_key = Keypair::from_bytes(&self.users[user_index].to_bytes()).unwrap();
+        let owner_pk = owner_key.pubkey();
+
+        self.process_transaction(
+            &[delete_all_perp_otc_orders(
+                &self.mango_program_id,
+                mango_group_pk,
+                mango_account_pk,
+                &owner_pk,
+            )
+            .unwrap()],
+            Some(&[&owner_key]),
+        )
+        .await
     }
 }
 
