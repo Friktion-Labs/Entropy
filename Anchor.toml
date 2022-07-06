@@ -13,7 +13,7 @@ cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [programs.mainnet]
-mango = "mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68"
+mango = "FcfzrnurPFXwxbx332wScnD5P86DwhpLpBbQsnr6LcH5"
 
 [programs.devnet]
-mango = "4skJ85cdxQAFVKbcGgfun8iZPL7BadVYXG3kGEGkufqA"
+mango = "FcfzrnurPFXwxbx332wScnD5P86DwhpLpBbQsnr6LcH5"
